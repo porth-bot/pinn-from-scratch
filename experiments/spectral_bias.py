@@ -59,9 +59,48 @@ What is measured
     (first step reaching 10% error) versus ``k``, for the plain MLP and for the
     Fourier-feature model, at identical width, depth, learning rate and step
     budget.
-(C) The documented failed run: the plain MLP at the highest ``k``, and an
-    honest check that it is not merely under-trained -- rerun it at 3x the step
-    budget and see whether it recovers.
+(C) Slow, or stuck? Rerun the plain net at 3x the step budget at the two
+    highest frequencies. "It failed" is a cheap claim if the run was simply
+    under-trained; the only way to earn it is to buy more compute and show it
+    does not help.
+
+What came out (seed 0, width 64, depth 4, 8000 Adam steps, 4k collocation)
+-------------------------------------------------------------------------
+Steps to reach 10% relative L2 error, and the final error:
+
+    k       plain               + Fourier features
+    1       200    (0.0026)     4600   (0.0424)
+    2       400    (0.0013)     1400   (0.0144)
+    4       800    (0.0011)      400   (0.0057)
+    8       1800   (0.0024)      400   (0.0035)
+    16      7400   (0.0399)      600   (0.0183)
+    32      never  (0.5145)     4800   (0.0944)
+
+Three things worth reading off that table, and the third one is the reason the
+experiment is written this way.
+
+1. Spectral bias is real and it is *graded*, not a cliff. The plain net's
+   time-to-fit roughly doubles per octave (200 -> 400 -> 800 -> 1800) and then
+   blows up (7400 -> never). This is the NTK prediction in wall-clock form.
+
+2. The failure at k = 32 is genuine, and k = 16 is not. Given 3x the budget the
+   plain net at k = 16 goes 0.0399 -> 0.0097 (it was merely *slow*), while at
+   k = 32 it goes 0.5145 -> 0.2622 -- still 2.6x above the 10% target after
+   24000 steps, and 2.8x worse than what the Fourier model reaches in a *third*
+   of that budget. Compute rescues k = 16; it does not rescue k = 32. Reporting
+   k = 16 as "a failure" would have been wrong, and only running the 3x check
+   would have caught it.
+
+3. The mitigation is a *trade*, not a free win -- and it cuts both ways. At
+   k = 1 the Fourier model is 23x SLOWER than the plain net (4600 steps vs 200)
+   and ends 16x less accurate. sigma_x = 5 hands the network frequencies the
+   k = 1 solution simply does not contain, and the optimizer spends its budget
+   chasing them. The crossover is at k = 4. At the other end, sigma_x = 5
+   covers ~5 cycles/unit while k = 32 needs 16, so the Fourier model is
+   straining at its own band edge too (0.0944, its worst high-k result). Both
+   edges are a consequence of fixing sigma ONCE for the whole sweep rather than
+   retuning per k -- which is deliberate: a mitigation you must retune for every
+   frequency is not a mitigation, it is the answer smuggled into the prior.
 
 Run:  python experiments/spectral_bias.py           # full sweep + figures
       python experiments/spectral_bias.py --quick    # tiny smoke run
@@ -86,9 +125,13 @@ from pinn.model import MLP, set_seed
 # Problem family
 # ---------------------------------------------------------------------------
 ALPHA1 = 0.05
-K_VALUES = (1, 2, 4, 8, 16)
+K_VALUES = (1, 2, 4, 8, 16, 32)
 X_RANGE = (0.0, 1.0)
 T_RANGE = (0.0, 1.0)
+
+# Frequencies at which we re-run the plain net with 3x the step budget, to
+# separate "slow" from "stuck" (part C). Chosen after seeing the 1x sweep.
+LONG_CHECK_KS = (16, 32)
 
 # One shared architecture for both models, so the comparison is honest.
 WIDTH, DEPTH = 64, 4
@@ -430,40 +473,71 @@ def figure_pinn_sweep(rows):
     savefig(fig, "spectral_pinn.png")
 
 
-def figure_failure_and_fix(k, hist_plain, hist_plain_long, hist_fourier,
-                           model_plain, model_fourier, t_slice=0.5):
-    fig, axes = plt.subplots(1, 2, figsize=(9.5, 3.4))
+def figure_failure_and_fix(k_fail, runs, long_runs, t_slice=0.5):
+    """Three panels: what the failed run looks like, why, and does compute fix it.
 
-    x = np.linspace(X_RANGE[0], X_RANGE[1], 400)
+    ``long_runs[k] = (model, history)`` is the plain net at 3x the step budget.
+    """
+    fig, axes = plt.subplots(1, 3, figsize=(13.5, 3.5))
+
+    # (a) the spatial profile at k_fail: what "failing" actually looks like
+    model_plain, hist_plain = runs[("plain", k_fail)]
+    model_fourier, hist_fourier = runs[("fourier", k_fail)]
+    x = np.linspace(X_RANGE[0], X_RANGE[1], 600)
     tt = np.full_like(x, t_slice)
-    axes[0].plot(x, exact(x, tt, k), "k-", lw=2, label="exact")
+    axes[0].plot(x, exact(x, tt, k_fail), "k-", lw=1.6, label="exact")
     for model, kind, c in ((model_plain, "plain", "C0"), (model_fourier, "fourier", "C1")):
         coords = torch.tensor(np.stack([x, tt], axis=1), dtype=torch.float32)
         with torch.no_grad():
             u = model(coords).squeeze(1).numpy()
-        axes[0].plot(x, u, color=c, lw=1.4, label=kind)
+        axes[0].plot(x, u, color=c, lw=1.3, label=kind)
     axes[0].set_xlabel("x")
     axes[0].set_ylabel(f"u(x, t={t_slice})")
-    axes[0].set_title(f"the failed run: k = {k}")
-    axes[0].legend()
+    axes[0].set_title(f"k = {k_fail}: the plain net after {STEPS} steps", loc="left")
+    axes[0].legend(fontsize=7)
 
+    # (b) error trajectories at k_fail, incl. the 3x-budget plain run
+    _, hist_long = long_runs[k_fail]
     for hist, label, style in (
         (hist_plain, f"plain ({STEPS} steps)", "C0-"),
-        (hist_plain_long, f"plain ({3 * STEPS} steps, 3x budget)", "C0--"),
+        (hist_long, f"plain ({3 * STEPS} steps, 3x)", "C0--"),
         (hist_fourier, f"Fourier ({STEPS} steps)", "C1-"),
     ):
-        axes[1].plot([h[0] for h in hist], [h[2] for h in hist], style, label=label)
+        axes[1].plot([h[0] for h in hist], [h[2] for h in hist], style, lw=1.4,
+                     label=label)
     axes[1].axhline(FIT_TOL, color="k", ls=":", lw=0.8)
-    axes[1].text(200, FIT_TOL * 1.1, "10% target", fontsize=7, color="0.4")
+    axes[1].axvline(STEPS, color="0.75", ls="-", lw=0.8)
+    axes[1].text(STEPS * 1.05, 1.3, "budget", fontsize=7, color="0.5")
     axes[1].set_yscale("log")
     axes[1].set_xlabel("Adam step")
     axes[1].set_ylabel("relative L2 error")
-    axes[1].set_title("it is not under-training")
+    axes[1].set_title(f"k = {k_fail}: does more compute rescue it?", loc="left")
     axes[1].legend(fontsize=7)
     axes[1].grid(True, which="both", alpha=0.25)
 
+    # (c) slow vs stuck: 1x vs 3x budget at each long-checked k
+    ks = sorted(long_runs)
+    width = 0.35
+    idx = np.arange(len(ks))
+    err_1x = [runs[("plain", k)][1][-1][2] for k in ks]
+    err_3x = [long_runs[k][1][-1][2] for k in ks]
+    axes[2].bar(idx - width / 2, err_1x, width, color="C0", label=f"{STEPS} steps")
+    axes[2].bar(idx + width / 2, err_3x, width, color="C0", alpha=0.45,
+                label=f"{3 * STEPS} steps (3x)")
+    axes[2].axhline(FIT_TOL, color="k", ls=":", lw=0.8)
+    axes[2].text(-0.45, FIT_TOL * 1.15, "10% target", fontsize=7, color="0.4")
+    axes[2].set_xticks(idx)
+    axes[2].set_xticklabels([f"k = {k}" for k in ks])
+    axes[2].set_yscale("log")
+    axes[2].set_ylabel("final relative L2 error")
+    axes[2].set_title("slow, or stuck?", loc="left")
+    axes[2].legend(fontsize=7)
+    axes[2].grid(True, axis="y", which="both", alpha=0.25)
+
     fig.suptitle(
-        f"Spectral bias on a PDE solve, and the Fourier-feature fix (k = {k})", y=1.04
+        "Spectral bias on a PDE solve: the plain net degrades with frequency, "
+        "and buying compute stops working",
+        y=1.04,
     )
     fig.tight_layout()
     savefig(fig, "spectral_fix.png")
@@ -501,33 +575,35 @@ def main(quick=False):
 
     k_fail = max(K_VALUES)
     print("\n" + "=" * 70)
-    print(f"(C) The failed run at k={k_fail}: is it just under-trained?")
+    print("(C) Slow, or stuck? Rerun the plain net at 3x the step budget")
     print("=" * 70)
-    # Reuse the sweep's own k_fail runs, so figure and table cannot disagree.
-    model_plain, hist_plain = runs[("plain", k_fail)]
-    model_fourier, hist_fourier = runs[("fourier", k_fail)]
-    print(f"  plain, 3x budget ({3 * STEPS} steps):")
-    model_long, hist_long = train_pinn(k_fail, "plain", steps=3 * STEPS, verbose=True)
-    print(
-        f"  plain {hist_plain[-1][2]:.4f} -> plain@3x {hist_long[-1][2]:.4f} "
-        f"-> fourier {hist_fourier[-1][2]:.4f}  (relative L2)"
-    )
+    # Reuse the sweep's own runs, so the figure and the table cannot disagree.
+    long_runs = {}
+    for k in LONG_CHECK_KS:
+        print(f"  plain k={k}, 3x budget ({3 * STEPS} steps):")
+        long_runs[k] = train_pinn(k, "plain", steps=3 * STEPS, verbose=True)
+        err_1x = runs[("plain", k)][1][-1][2]
+        err_3x = long_runs[k][1][-1][2]
+        print(f"    k={k:2d}: plain {err_1x:.4f} at {STEPS} steps -> "
+              f"{err_3x:.4f} at {3 * STEPS}  "
+              f"(fourier at {STEPS}: {runs[('fourier', k)][1][-1][2]:.4f})")
+
     write_csv(
-        "spectral_k16.csv",
-        ["model", "step", "loss", "rel_l2"],
+        "spectral_long.csv",
+        ["model", "k", "step", "loss", "rel_l2"],
         [
-            {"model": name, "step": s, "loss": f"{l:.6e}", "rel_l2": f"{e:.6e}"}
+            {"model": name, "k": k, "step": s,
+             "loss": f"{l:.6e}", "rel_l2": f"{e:.6e}"}
+            for k in LONG_CHECK_KS
             for name, hist in (
-                ("plain", hist_plain),
-                ("plain_3x", hist_long),
-                ("fourier", hist_fourier),
+                ("plain", runs[("plain", k)][1]),
+                ("plain_3x", long_runs[k][1]),
+                ("fourier", runs[("fourier", k)][1]),
             )
             for s, l, e in hist
         ],
     )
-    figure_failure_and_fix(
-        k_fail, hist_plain, hist_long, hist_fourier, model_plain, model_fourier
-    )
+    figure_failure_and_fix(k_fail, runs, long_runs)
 
 
 if __name__ == "__main__":
