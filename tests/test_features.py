@@ -13,6 +13,8 @@ the claims this module actually rests on are
 """
 
 import math
+import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -21,6 +23,9 @@ import torch
 from pinn.derivatives import u_xx
 from pinn.features import FourierFeatures, FourierMLP
 from pinn.model import MLP, set_seed
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "experiments"))
+from spectral_bias import model_sine_coefficients  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -122,34 +127,15 @@ def test_second_derivative_flows_through_the_embedding():
 # ---------------------------------------------------------------------------
 # (b) The mechanism: high-frequency energy is present *at initialization*
 # ---------------------------------------------------------------------------
-def sine_energy(model, n_modes=24, n=1024):
-    """Energy of ``u(., t=0)`` in the sine basis ``sin(k pi x)``, k = 1..n_modes.
+def sine_energy(model, n_modes=24):
+    """Energy ``c_k^2`` of ``u(., t=0)`` in the sine basis, k = 1..n_modes.
 
-    The right basis to ask this question in is the problem's own: ``sin(k pi x)``
-    are the Dirichlet eigenfunctions of the Laplacian on [0, 1], so this is
-    literally the decomposition the heat equation diagonalizes in.
-
-    One preprocessing step matters. A raw network output does not vanish at
-    x = 0, 1, and a sine series of a function with nonzero endpoints converges
-    only like 1/k -- which would show up as spurious "high-frequency content"
-    for *any* model, including a straight line. (The same trap in Fourier form:
-    an ``np.fft`` of a smooth ramp leaks a fake 1/f^2 tail across every bin,
-    because the FFT assumes periodicity.) So subtract the linear interpolant
-    between the endpoints first; the remainder vanishes at both ends and its
-    sine coefficients decay at the true rate of the function's smoothness.
-
-    Returns (ks, energy) with ``energy[i] = c_k^2``.
+    Uses the projection from ``experiments/spectral_bias.py`` (one
+    implementation, and its ramp-subtraction subtlety is tested over there in
+    ``test_ramp_subtraction_makes_a_straight_line_read_as_smooth``).
     """
-    x = np.linspace(0.0, 1.0, n)
-    coords = torch.tensor(np.stack([x, np.zeros_like(x)], axis=1), dtype=torch.float32)
-    with torch.no_grad():
-        u = model(coords).squeeze(1).numpy().astype(float)
-    u = u - u[0] - x * (u[-1] - u[0])  # now u(0) = u(1) = 0
-    ks = np.arange(1, n_modes + 1)
-    c = 2.0 * np.trapezoid(
-        u[None, :] * np.sin(ks[:, None] * np.pi * x[None, :]), x, axis=1
-    )
-    return ks, c ** 2
+    c = model_sine_coefficients(model, n_modes=n_modes)
+    return np.arange(1, n_modes + 1), c ** 2
 
 
 def _high_freq_fraction(model, k_cut=4):
