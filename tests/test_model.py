@@ -86,3 +86,13 @@ def test_one_optimization_step_decreases_a_trivial_loss():
     opt.step()
     after = losses.data_loss(net, coords, target).item()
     assert after < before
+
+
+def test_package_exports_the_documented_public_api():
+    # The README's module table presents features.py alongside derivatives.py
+    # and losses.py as core; every name in __all__ must resolve off the
+    # package itself, not just via its defining submodule.
+    import pinn
+
+    for name in pinn.__all__:
+        assert hasattr(pinn, name), f"pinn.__all__ advertises {name!r} but it is missing"
