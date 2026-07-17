@@ -283,6 +283,28 @@ eigenvalue-flattening argument for PINNs specifically); Sitzmann et al. (2020)
 (SIREN). Full list with roles in
 [`theory/derivations.md`](theory/derivations.md).
 
+## Part of a from-scratch series
+
+Same bar in each: the core written out by hand, every non-obvious claim checked
+against a closed form or an independent oracle, limitations stated rather than
+buried.
+
+| Repo | Built from scratch |
+| --- | --- |
+| **pinn-from-scratch** *(this repo)* | Physics-informed networks: exact autograd PDE residuals against closed-form solutions |
+| [mcmc-from-scratch](https://github.com/porth-bot/mcmc-from-scratch) | Metropolis-Hastings, Gibbs, HMC, MALA, parallel tempering — validated against exact posteriors |
+| [gp-from-scratch](https://github.com/porth-bot/gp-from-scratch) | GP regression, kernels with hand-derived gradients, ML-II, and the NTK/NNGP wide-network correspondence |
+| [grokking-transformer](https://github.com/porth-bot/grokking-transformer) | A transformer that groks modular arithmetic, and the Fourier circuit it learns |
+
+The load-bearing link is to gp-from-scratch: §3's spectral bias is not a
+metaphor about the NTK but an application of it, and the
+$(1-\eta\lambda_i)^s$ contraction it rests on is derived from scratch there in
+§6–7 (cross-linked from [`theory/derivations.md`](theory/derivations.md) §4).
+grokking-transformer is the same frequency-domain lens pointed at a different
+question — what a trained network represents, read off the trajectory rather
+than the endpoint, which is exactly the distinction §3 needed the 3× budget
+controls to make.
+
 ## Provenance
 
 This is an **AI-assisted** study resource: the implementation was written with
@@ -290,11 +312,7 @@ Claude (Anthropic) as a from-scratch reference for learning how PINNs work,
 with honest attribution. Every derivation is written out in
 [`theory/derivations.md`](theory/derivations.md) and every non-obvious claim is
 tested against a closed-form or independently computed ground truth rather than
-taken on faith. Commits carry a `Co-Authored-By` trailer. Part of a
-from-scratch series alongside
-[gp-from-scratch](https://github.com/porth-bot/gp-from-scratch),
-[mcmc-from-scratch](https://github.com/porth-bot/mcmc-from-scratch), and
-[grokking-transformer](https://github.com/porth-bot/grokking-transformer).
+taken on faith. Commits carry a `Co-Authored-By` trailer.
 
 *Suggested GitHub topics:* `physics-informed-neural-networks` `pinn` `pde`
 `scientific-ml` `pytorch` `from-scratch`
