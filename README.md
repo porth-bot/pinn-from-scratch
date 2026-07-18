@@ -211,17 +211,48 @@ own Dirichlet eigenbasis. And the FD ground-truth check's tolerance is now
 *derived* as the $O(h^2)$ truncation floor $\alpha_1\pi^4k^2h^2/12$ rather
 than guessed (it is $k$-independent under the $\alpha_k$ scaling).
 
+### 4. Optimizer: our Adam vs torch L-BFGS (`experiments/optimizer_study.py`)
+
+Every experiment above trains with Adam, but the PINN literature's default
+recipe is **Adam then L-BFGS** — first-order to find a basin, then a
+quasi-Newton method that uses curvature to polish the smooth, low-dimensional
+PINN loss. This compares the two on the heat problem with everything but the
+optimizer held fixed (same init, same fixed collocation, same loss). Cost is in
+*loss-and-gradient evaluations* — Adam does one per step; L-BFGS calls its
+closure several times per iteration for the strong-Wolfe line search, so a
+per-step axis would flatter it. (Same honest per-evaluation accounting as the
+ESS-per-gradient axis in the sibling [mcmc-from-scratch](https://github.com/porth-bot/mcmc-from-scratch).)
+
+| regime | evals to converge | wall-clock | final rel L2 |
+|---|---|---|---|
+| Adam (8k steps) | 8 000 | 106 s | 2.42e-3 |
+| L-BFGS (from init) | **673** | **9.8 s** | 2.27e-3 |
+| hybrid (Adam 1k → L-BFGS) | 1 655 | 23 s | **2.25e-3** |
+
+L-BFGS reaches the **same** ~2.3e-3 accuracy as Adam using ~12× fewer
+evaluations and ~11× less wall-clock — curvature information is worth a lot on a
+loss this smooth. Two honest caveats the numbers force: (1) on *this* easy,
+convex-basin target pure L-BFGS from init is enough — the Adam warmup buys the
+hybrid only a hair more accuracy and costs more than L-BFGS alone here; its real
+value is on stiffer losses (the Burgers shock, high-$k$ spectral-bias runs)
+where L-BFGS from a cold init can stall in a bad minimum. (2) Adam's error
+*oscillates* late in training (visible as spikes below), while L-BFGS descends
+monotonically then flattens — the line search rejects uphill steps.
+
+<p align="center"><img src="figures/optimizer_study.png" width="460"></p>
+
 ## Reproduce
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install -e ".[dev]"
-pytest -q                       # 73 tests, ~35 s
+pytest -q                       # 77 tests, ~35 s
 cd experiments
 python heat.py                  # ~25 min (default solve + both sweeps)
 python burgers.py               # ~30 min (Cole-Hopf truth + PINN train)
 python spectral_bias.py         # ~2 h   (12 PINN runs + regression + 3x controls)
+python optimizer_study.py       # ~2.5 min (Adam vs L-BFGS vs hybrid)
 ```
 
 Every script takes `--quick` for a fast smoke run. Figures land in `figures/`
