@@ -53,7 +53,7 @@ default for that reason, and there is a test asserting exactly this.
 |---|---|
 | [`pinn/model.py`](pinn/model.py) | `MLP` — tanh (default) or SIREN-style sine activations, Xavier / SIREN init, linear output head. `set_seed` for reproducibility. |
 | [`pinn/derivatives.py`](pinn/derivatives.py) | `u_x`, `u_t`, `u_xx`, `u_tt`, `laplacian` via `torch.autograd.grad` with `create_graph=True` (so derivatives are themselves differentiable and can be composed into higher orders). The batch-diagonal-Jacobian trick is written out in the module docstring. |
-| [`pinn/losses.py`](pinn/losses.py) | `residual_loss` (physics passed in as a callable), shared `data_loss` for IC/Dirichlet-BC, and reproducible uniform collocation samplers (`interior_points`, `initial_points`, `boundary_points`), each taking an explicit `torch.Generator`. |
+| [`pinn/losses.py`](pinn/losses.py) | `residual_loss` (physics passed in as a callable), shared `data_loss` for IC/Dirichlet-BC, reproducible uniform collocation samplers (`interior_points`, `initial_points`, `boundary_points`), and `adaptive_interior_points` — residual-adaptive resampling (RAD; Wu et al. 2023) that pulls points toward large-residual regions like the Burgers shock (§5). Each takes an explicit `torch.Generator`. |
 | [`pinn/features.py`](pinn/features.py) | `FourierFeatures` — a fixed, non-trainable random Fourier map $\gamma(v) = [\cos 2\pi Bv,\ \sin 2\pi Bv]$ with per-coordinate $\sigma$ — and `FourierMLP`, a wrapper, so the plain MLP stays bit-for-bit unchanged and the §3 comparison is honest. |
 
 The derivations behind all of it — the PINN loss, the heat Fourier series,
@@ -241,18 +241,58 @@ monotonically then flattens — the line search rejects uphill steps.
 
 <p align="center"><img src="figures/optimizer_study.png" width="460"></p>
 
+### 5. Residual-adaptive collocation: a failure mode and its fix (`experiments/adaptive_collocation.py`)
+
+Uniform collocation spreads its points evenly, but Burgers puts ~94% of its
+error in the thin shock at $x=0$ (§2) — the region a uniform sample least
+resolves. The obvious fix is to move points to where the residual is large
+(`pinn.losses.adaptive_interior_points`, residual-density sampling; RAD, Wu et
+al. 2023). The instructive result is that *how* you move them decides whether it
+helps at all. Three arms, same 3000-point budget, sharing a bit-identical
+uniform warmup so they branch from one state (rel L2 $\approx 0.21$ at step 5000):
+
+| arm | rel L2 | shock-band \|err\| ($\lvert x\rvert\le0.1$) | off-shock \|err\| |
+|---|---|---|---|
+| **U** uniform (keep the set) | 2.10e-1 | 1.83e-1 | 1.89e-2 |
+| **R** resample (replace the set by density) | **4.58e-1** | **5.54e-1** | 2.51e-2 |
+| **A** RAR (add density points to the base) | **1.61e-1** | **1.24e-1** | 1.08e-2 |
+
+<p align="center"><img src="figures/adaptive_collocation.png" width="900"></p>
+
+**Replacing the whole set makes things worse, badly.** Burgers' residual is
+near-singular at the shock (it carries $u_{xx}\sim\mathcal O(100)$), so a set
+drawn $\propto\lvert r\rvert$ piles points onto the least-tractable region; the
+loss is dominated by them, the smooth region loses coverage, and a model at rel
+L2 $\approx0.21$ collapses to $0.46$ (its shock error *triples*) — measured
+directly: within ~50 steps of the first resample the fit jumps from 0.03-class
+to 0.86 on a longer clean run. **RAR fixes it by never removing the uniform
+base**: keep the base, *add* density-drawn points (matched to the same total),
+and the smooth region stays covered while the extra points sharpen the shock —
+rel L2 falls to 0.16 (−23%) and shock-band error to 0.12 (−32%), with 25% of the
+added points landing in $\lvert x\rvert\le0.1$ vs the ~10% a uniform draw gives.
+The only difference between R and A is replace-vs-add.
+
+Two honest notes. The absolute errors here are well above the flagship Burgers
+run's 1.2e-2 (§2): this uses a smaller net and a shorter budget so three arms are
+affordable, and the point is the *relative* effect of the collocation strategy,
+which the shared warmup isolates. And RAD is not intrinsically bad — full-set
+resampling on this near-singular target is; on smoother problems, or from a
+sufficiently converged state, replacement is stable too. RAR is simply the safe
+default here.
+
 ## Reproduce
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install -e ".[dev]"
-pytest -q                       # 77 tests, ~35 s
+pytest -q                       # 80 tests, ~35 s
 cd experiments
 python heat.py                  # ~25 min (default solve + both sweeps)
 python burgers.py               # ~30 min (Cole-Hopf truth + PINN train)
 python spectral_bias.py         # ~2 h   (12 PINN runs + regression + 3x controls)
 python optimizer_study.py       # ~2.5 min (Adam vs L-BFGS vs hybrid)
+python adaptive_collocation.py  # ~12 min (RAD/RAR: 3-arm collocation study)
 ```
 
 Every script takes `--quick` for a fast smoke run. Figures land in `figures/`
@@ -299,9 +339,10 @@ single-core CPU.
   weights, so they are satisfied approximately and the weights are a real
   tuning burden. Hard enforcement via a trial-function ansatz is a roadmap
   item.
-- **Adam only, and 1D + time only.** L-BFGS is the classic PINN optimizer and
-  is not implemented; no adaptive/residual-based collocation resampling; no 2D
-  spatial problems.
+- **1D + time only.** No 2D spatial problems. (L-BFGS, the classic PINN
+  optimizer, is now studied in §4, and residual-adaptive collocation in §5 —
+  both were on this list and have been ticked off; a 2D spatial problem has
+  not.)
 
 ## References
 
@@ -311,7 +352,8 @@ Rahaman et al. (2019) (spectral bias); Jacot, Gabriel & Hongler (2018) (the
 NTK behind §3, derived from scratch in gp-from-scratch); Tancik et al. (2020)
 (random Fourier features); Wang, Wang & Perdikaris (2021) (the
 eigenvalue-flattening argument for PINNs specifically); Sitzmann et al. (2020)
-(SIREN). Full list with roles in
+(SIREN); Lu et al. (2021, DeepXDE) and Wu et al. (2023) (residual-adaptive
+refinement / distribution — RAR and RAD in §5). Full list with roles in
 [`theory/derivations.md`](theory/derivations.md).
 
 ## Part of a from-scratch series
