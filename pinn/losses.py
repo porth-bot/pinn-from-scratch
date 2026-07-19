@@ -92,6 +92,55 @@ def boundary_points(
     return left, right
 
 
+def adaptive_interior_points(
+    model,
+    residual: Residual,
+    n: int,
+    x_range: tuple[float, float],
+    t_range: tuple[float, float],
+    gen: torch.Generator,
+    *,
+    n_candidates: int = 40000,
+    k: float = 1.0,
+    c: float = 1.0,
+) -> torch.Tensor:
+    """Residual-adaptive collocation points (RAD; Wu et al. 2023).
+
+    Uniform collocation spends the same point budget everywhere, but a PDE with
+    a localized sharp feature -- the viscous shock in Burgers, a boundary layer,
+    a front -- has its error concentrated in a thin region a uniform sample
+    barely resolves. RAD moves the points to where the residual is large.
+
+    Draw a large uniform candidate pool, evaluate the current residual there, and
+    resample ``n`` points from the discrete density
+
+        p_i  proportional to  ( |r_i|^k / mean_j |r_j|^k ) + c,
+
+    with ``k`` sharpening the concentration and ``c > 0`` keeping a uniform floor
+    so the rest of the domain is never abandoned (Wu et al.'s defaults k=c=1
+    reproduce their RAD). At ``k=0`` or ``c -> inf`` this collapses back to
+    uniform sampling. The returned tensor has ``requires_grad_`` set, like
+    :func:`interior_points`, so it drops straight into :func:`residual_loss`.
+
+    The residual is evaluated under autograd (it differentiates the network) but
+    only its magnitude is used to build the sampling weights, so the pool graph
+    is detached before selection -- no training signal flows through the choice
+    of points, exactly as intended (the points are where we *measure* the PDE,
+    not parameters to optimize).
+    """
+    if not 0.0 <= k or c <= 0.0:
+        raise ValueError("require k >= 0 and c > 0")
+    cand = interior_points(n_candidates, x_range, t_range, gen)
+    r = residual(model(cand), cand)
+    with torch.no_grad():
+        w = r.detach().abs().flatten() ** k
+        w = w / w.mean().clamp_min(1e-30) + c
+        idx = torch.multinomial(w, n, replacement=n > n_candidates, generator=gen)
+    pts = cand.detach()[idx].clone()
+    pts.requires_grad_(True)
+    return pts
+
+
 def residual_loss(model, coords: torch.Tensor, residual: Residual) -> torch.Tensor:
     """Mean squared PDE residual at the interior collocation points.
 

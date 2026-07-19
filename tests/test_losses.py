@@ -41,6 +41,54 @@ def test_samplers_are_deterministic_given_the_generator():
     assert torch.equal(a.detach(), b.detach())
 
 
+def test_adaptive_points_concentrate_where_the_residual_is_large():
+    # A synthetic residual that is large only in a thin band near x = 0. RAD
+    # should pull the collocation points into that band; uniform sampling would
+    # leave only ~(band width / domain width) of them there.
+    gen = torch.Generator().manual_seed(0)
+
+    def spiky_residual(u, coords):
+        x = coords[:, 0:1]
+        return torch.exp(-(x / 0.05) ** 2)          # peaked at x = 0
+
+    ident = MLP(in_dim=2, out_dim=1, width=8, depth=2)  # model is unused here
+    pts = losses.adaptive_interior_points(
+        ident, spiky_residual, 2000, (-1.0, 1.0), (0.0, 1.0), gen,
+        n_candidates=40000, k=2.0, c=0.1,
+    )
+    assert pts.shape == (2000, 2) and pts.requires_grad
+    frac_in_band = (pts[:, 0].abs() < 0.1).float().mean().item()
+    # a uniform sample would put ~10% (0.2 / 2.0) of points in |x| < 0.1;
+    # the residual is ~100x larger there, so adaptivity must beat uniform by a lot.
+    assert frac_in_band > 0.6
+
+
+def test_adaptive_points_reduce_to_uniform_when_the_residual_is_flat():
+    # Flat residual -> the weight is the same everywhere -> the sampled points
+    # are just a uniform draw. Check the in-band fraction matches the geometric
+    # 10% a uniform sampler gives, not the concentrated RAD fraction above.
+    gen = torch.Generator().manual_seed(1)
+    flat = lambda u, coords: torch.ones(coords.shape[0], 1)
+    ident = MLP(in_dim=2, out_dim=1, width=8, depth=2)
+    pts = losses.adaptive_interior_points(
+        ident, flat, 4000, (-1.0, 1.0), (0.0, 1.0), gen, n_candidates=40000,
+    )
+    frac_in_band = (pts[:, 0].abs() < 0.1).float().mean().item()
+    assert abs(frac_in_band - 0.10) < 0.03
+
+
+def test_adaptive_points_reject_bad_hyperparameters():
+    import pytest
+
+    gen = torch.Generator().manual_seed(0)
+    flat = lambda u, coords: torch.ones(coords.shape[0], 1)
+    ident = MLP(in_dim=2, out_dim=1, width=8, depth=2)
+    for bad in (dict(k=-1.0), dict(c=0.0), dict(c=-1.0)):
+        with pytest.raises(ValueError):
+            losses.adaptive_interior_points(
+                ident, flat, 10, (-1.0, 1.0), (0.0, 1.0), gen, **bad)
+
+
 def test_residual_loss_is_zero_for_the_exact_solution():
     # r = u_t - alpha u_xx on u = sin(a x) exp(-b t) with alpha = b/a^2 is 0,
     # so the residual loss of that analytic field is ~0 (float roundoff only).
