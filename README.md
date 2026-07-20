@@ -280,19 +280,50 @@ resampling on this near-singular target is; on smoother problems, or from a
 sufficiently converged state, replacement is stable too. RAR is simply the safe
 default here.
 
+### 6. The classical baseline: Crank-Nicolson finite differences (`experiments/crank_nicolson.py`)
+
+The limitations section says classical solvers win here decisively. This makes
+it a number, not a claim. The *same* heat problem — same $\alpha$, same
+three-mode IC, same Dirichlet BCs — is solved by a textbook second-order scheme:
+Crank-Nicolson (trapezoidal-in-time central differences), one tridiagonal solve
+per step via a from-scratch Thomas algorithm, unconditionally stable so the time
+step is not tied to $dx^2$. Accuracy against the same exact solution, at four
+grid resolutions, with wall-clock:
+
+| method | grid | rel L2 | wall-clock | order |
+|---|---|---|---|---|
+| Crank-Nicolson | 20×20 | 1.74e-3 | **0.25 ms** | — |
+| Crank-Nicolson | 40×40 | 4.37e-4 | 0.87 ms | 1.99 |
+| Crank-Nicolson | 80×80 | 1.10e-4 | 3.3 ms | 2.00 |
+| Crank-Nicolson | 160×160 | 2.75e-5 | 13 ms | 2.00 |
+| **PINN** (Adam, §4) | — | 2.42e-3 | **106 s** | (none) |
+
+<p align="center"><img src="figures/crank_nicolson.png" width="520"></p>
+
+**The coarsest 20×20 grid already beats the PINN's accuracy (1.7e-3 vs 2.4e-3)
+at roughly $4\times10^{5}$ less wall-clock** (0.25 ms vs 106 s). And the two
+curves go opposite ways: CN's error falls a clean factor of ~4 per refinement
+(the measured convergence order is 2.00 — the FD scheme comes with a guarantee),
+so it drives the error arbitrarily low for a few more milliseconds, while the
+PINN's nonconvex loss plateaus near $10^{-3}$ and buys nothing from more compute.
+This is the concrete backing for the first limitation below: for a smooth,
+low-dimensional, well-posed forward problem, there is no contest. The PINN's case
+is inverse/high-dimensional/mesh-free problems — none of which this is.
+
 ## Reproduce
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install -e ".[dev]"
-pytest -q                       # 80 tests, ~35 s
+pytest -q                       # 85 tests, ~35 s
 cd experiments
 python heat.py                  # ~25 min (default solve + both sweeps)
 python burgers.py               # ~30 min (Cole-Hopf truth + PINN train)
 python spectral_bias.py         # ~2 h   (12 PINN runs + regression + 3x controls)
 python optimizer_study.py       # ~2.5 min (Adam vs L-BFGS vs hybrid)
 python adaptive_collocation.py  # ~12 min (RAD/RAR: 3-arm collocation study)
+python crank_nicolson.py        # <1 s   (classical FD baseline vs the PINN)
 ```
 
 Every script takes `--quick` for a fast smoke run. Figures land in `figures/`
@@ -321,10 +352,13 @@ single-core CPU.
 
 ## Limitations / next
 
-- **On these problems, classical solvers win — decisively.** The 1D heat
-  equation is solved to machine precision in milliseconds by a spectral method
-  (it *is* the Fourier series of §1); the Cole-Hopf quadrature beats the ~30
-  minute PINN train on speed and accuracy by orders of magnitude. For
+- **On these problems, classical solvers win — decisively.** Measured directly
+  in §6: a Crank-Nicolson finite-difference solver on a coarse 20×20 grid beats
+  the PINN's accuracy at ~$4\times10^{5}$ less wall-clock, and refines at a
+  guaranteed second order while the PINN plateaus. The 1D heat equation is also
+  solved to machine precision by a spectral method (it *is* the Fourier series
+  of §1); the Cole-Hopf quadrature beats the ~30 minute PINN train on speed and
+  accuracy by orders of magnitude. For
   low-dimensional, smooth, well-posed forward problems on regular domains,
   finite differences / finite elements / spectral methods win on speed,
   accuracy, and convergence *guarantees* (the PINN offers a nonconvex loss and
