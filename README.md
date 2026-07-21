@@ -310,13 +310,54 @@ This is the concrete backing for the first limitation below: for a smooth,
 low-dimensional, well-posed forward problem, there is no contest. The PINN's case
 is inverse/high-dimensional/mesh-free problems — none of which this is.
 
+### 7. Hard boundary/initial conditions: a trial-function ansatz (`experiments/hard_bc.py`)
+
+Every solve above enforces the IC and BCs the *soft* way — add
+$w_{\text{ic}}\lVert u-g\rVert^2 + w_{\text{bc}}\lVert u\rVert^2$ to the residual
+loss — so the constraints hold only approximately and the weights are a real
+knob (the theory doc §1, §5 calls them out). The classical alternative (Lagaris,
+Likas & Fotiadis 1998) is to build the constraints into the *function space*. For
+this heat problem — $u(x,0)=g(x)$, $u(0,t)=u(1,t)=0$ — write
+
+$$u_\theta(x,t) = g(x) + x\,(1-x)\,t\,N_\theta(x,t).$$
+
+Both conditions are then exact for **any** network weights: at $t=0$ the factor
+$t$ kills the correction so $u_\theta=g$; at $x\in\{0,1\}$ the factor $x(1-x)$
+kills it so $u_\theta=g=0$ (the sine IC already vanishes at the walls). The IC/BC
+loss terms disappear — the ansatz trains the residual alone, no weights. Same
+architecture, same seed (bit-identical init), same collocation, same optimizer;
+the only differences are the two the method is about.
+
+| method | rel $L^2$ (best) | rel $L^2$ (final) | IC error | BC error | weights to tune |
+|---|---|---|---|---|---|
+| soft (residual + IC + BC) | 3.4e-3 | 3.6e-3 | 1.7e-2 | 1.7e-2 | 2 |
+| **hard (ansatz, residual only)** | **2.4e-4** | 5.0e-3 | **0** | **6e-9** | **0** |
+
+<p align="center"><img src="figures/hard_bc.png" width="820"></p>
+
+Two clean wins and one honest caveat. **(1)** The constraints are exact — IC to
+zero, BC at the float32 floor — against the soft penalty's $1.7\times10^{-2}$,
+and there is no weight to balance. **(2)** On accuracy the *trajectory* (panel a)
+is the honest read: the ansatz reaches the soft run's lifetime-best error by
+~step 700 (≈5× sooner) and bottoms out ~14× deeper ($2.4\times10^{-4}$ vs
+$3.4\times10^{-3}$), because the IC/BC data no longer competes with the residual
+in a weighted sum — the whole loss is the physics. **The caveat:** on this easy,
+smooth problem both eventually plateau in the low-$10^{-3}$/$10^{-4}$ range and
+both show late Adam oscillation, so the single *final-step* number is noisy
+(hard's endpoint lands on an up-bounce and reads *worse* than soft's — which is
+exactly why the honest column is *best*, not *final*). And the ansatz has a
+cost the soft penalty does not: it must be hand-derived per problem (here it
+needs the analytic $g$ and a boundary-vanishing envelope), whereas a penalty
+term is added mechanically to any BC. Hard constraints remove a tuning knob and
+guarantee exactness; they do not come free.
+
 ## Reproduce
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install -e ".[dev]"
-pytest -q                       # 85 tests, ~35 s
+pytest -q                       # 89 tests, ~40 s
 cd experiments
 python heat.py                  # ~25 min (default solve + both sweeps)
 python burgers.py               # ~30 min (Cole-Hopf truth + PINN train)
@@ -324,6 +365,7 @@ python spectral_bias.py         # ~2 h   (12 PINN runs + regression + 3x control
 python optimizer_study.py       # ~2.5 min (Adam vs L-BFGS vs hybrid)
 python adaptive_collocation.py  # ~12 min (RAD/RAR: 3-arm collocation study)
 python crank_nicolson.py        # <1 s   (classical FD baseline vs the PINN)
+python hard_bc.py               # ~14 min (hard-constraint ansatz vs soft penalty)
 ```
 
 Every script takes `--quick` for a fast smoke run. Figures land in `figures/`
@@ -369,14 +411,11 @@ single-core CPU.
   to hand-derive), high dimension (no mesh to explode), and irregular geometry
   — are **not demonstrated here**. The inverse problem is the top roadmap
   item, and it is the setting where PINNs are genuinely competitive.
-- **Soft constraints only.** IC/BCs enter as penalty terms with hand-set
-  weights, so they are satisfied approximately and the weights are a real
-  tuning burden. Hard enforcement via a trial-function ansatz is a roadmap
-  item.
 - **1D + time only.** No 2D spatial problems. (L-BFGS, the classic PINN
-  optimizer, is now studied in §4, and residual-adaptive collocation in §5 —
-  both were on this list and have been ticked off; a 2D spatial problem has
-  not.)
+  optimizer, is now studied in §4, residual-adaptive collocation in §5, and hard
+  boundary-condition enforcement in §7 — all three were on this list and have
+  been ticked off; a 2D spatial problem has not. Soft penalties remain the
+  default because the hard ansatz must be hand-derived per problem, §7.)
 
 ## References
 
