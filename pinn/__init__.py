@@ -14,7 +14,8 @@ failure mode) live in ``experiments/`` and write their figures from committed
 logs.
 """
 
-from pinn import derivatives, features, losses  # noqa: F401
+from pinn import checkpoints, derivatives, features, losses  # noqa: F401
+from pinn.checkpoints import load_model, save_model  # noqa: F401
 from pinn.features import FourierFeatures, FourierMLP  # noqa: F401
 from pinn.model import MLP, set_seed  # noqa: F401
 
@@ -23,6 +24,9 @@ __all__ = [
     "FourierFeatures",
     "FourierMLP",
     "set_seed",
+    "load_model",
+    "save_model",
+    "checkpoints",
     "derivatives",
     "features",
     "losses",
