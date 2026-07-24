@@ -353,11 +353,34 @@ guarantee exactness; they do not come free.
 
 ## Reproduce
 
+Every figure, from a clean clone, without training anything:
+
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install torch --index-url https://download.pytorch.org/whl/cpu
-pip install -e ".[dev]"
-pytest -q                       # 89 tests, ~40 s
+pip install -r requirements.txt && pip install -e .
+./reproduce.sh                  # tests, then all 11 figures: ~1 min
+```
+
+Training this repo end to end is about three hours of CPU, so the artifacts
+ship with it: CSV logs in `logs/`, trained weights in `checkpoints/`. The split
+matters — a figure of a *curve* can be rebuilt from a log, but a figure of a
+*field* (the error heatmaps, the Burgers slices, the k=32 profile) is a picture
+of the trained network, and only the weights reproduce that. Each experiment
+takes `--figures` to replay its own figures alone.
+
+`requirements.txt` pins the exact versions the committed artifacts were
+produced with (Python 3.12.13, torch 2.13.0); `pyproject.toml` keeps lower
+bounds, which is what CI installs on 3.10 and 3.12. Training is seeded and
+replays on the same torch build — the heat run reproduces its committed loss
+history to every digit the CSV stores — but torch guarantees no bitwise
+determinism across versions or hardware, which is why the artifacts are
+committed rather than regenerated on demand.
+
+To actually retrain:
+
+```bash
+pytest -q                       # 98 tests, ~40 s
 cd experiments
 python heat.py                  # ~25 min (default solve + both sweeps)
 python burgers.py               # ~30 min (Cole-Hopf truth + PINN train)
@@ -368,10 +391,15 @@ python crank_nicolson.py        # <1 s   (classical FD baseline vs the PINN)
 python hard_bc.py               # ~14 min (hard-constraint ansatz vs soft penalty)
 ```
 
-Every script takes `--quick` for a fast smoke run. Figures land in `figures/`
-and numbers in `logs/`, both committed — so every table above is regenerable
-from the committed CSVs without retraining. Seeds are fixed; runtimes are
-single-core CPU.
+Every script takes `--quick` for a fast smoke run, and `--figures` to skip
+training entirely and redraw from the committed artifacts. Figures land in
+`figures/`, numbers in `logs/`, weights in `checkpoints/`, all committed. Seeds
+are fixed; runtimes are single-core CPU.
+
+`tests/test_reproduce_figures.py` asserts that every figure in `figures/` has a
+replay path, that every log and checkpoint the replay reads is committed, and
+that each checkpoint still loads into the model its experiment builds today —
+so the reproduction path cannot quietly rot.
 
 ## Design notes
 
