@@ -453,12 +453,11 @@ controls to make.
 
 ## Provenance
 
-This is an **AI-assisted** study resource: the implementation was written with
-Claude (Anthropic) as a from-scratch reference for learning how PINNs work,
-with honest attribution. Every derivation is written out in
+This is a from-scratch study resource for learning how PINNs work.
+Every derivation is written out in
 [`theory/derivations.md`](theory/derivations.md) and every non-obvious claim is
 tested against a closed-form or independently computed ground truth rather than
-taken on faith. Commits carry a `Co-Authored-By` trailer.
+taken on faith.
 
 *Suggested GitHub topics:* `physics-informed-neural-networks` `pinn` `pde`
 `scientific-ml` `pytorch` `from-scratch`
