@@ -30,6 +30,7 @@ Both sweeps are logged to CSV so the README numbers regenerate without
 retraining.
 
 Run:  python experiments/heat.py            # full sweeps + figures (slow)
+      python experiments/heat.py --figures   # replay both figures, no training
       python experiments/heat.py --quick     # tiny run, for a smoke check
 """
 
@@ -41,8 +42,9 @@ import time
 import numpy as np
 import torch
 
-from common import plt, savefig, write_csv
+from common import ckpt_path, plt, read_csv, savefig, write_csv
 from pinn import derivatives as D
+from pinn.checkpoints import load_model, save_model
 from pinn.losses import boundary_points, initial_points, interior_points
 from pinn.model import MLP, set_seed
 
@@ -114,6 +116,17 @@ def rel_l2_error(model, nx=101, nt=101):
 # ---------------------------------------------------------------------------
 # Training
 # ---------------------------------------------------------------------------
+DEFAULTS = dict(n_interior=4000, width=128, depth=4, steps=5000)
+CKPT = "heat_default.pt"
+
+
+def model_config(width=128, depth=4):
+    """Constructor kwargs for the field -- the single source of truth shared by
+    training and by the committed checkpoint, so a reloaded model cannot be a
+    differently-shaped network that happens to load."""
+    return dict(in_dim=2, out_dim=1, width=width, depth=depth, activation="tanh")
+
+
 def train(
     n_interior=4000,
     width=128,
@@ -143,7 +156,7 @@ def train(
     bc = torch.cat([left, right], dim=0)
     bc_target = torch.zeros(bc.shape[0], 1)
 
-    model = MLP(in_dim=2, out_dim=1, width=width, depth=depth, activation="tanh")
+    model = MLP(**model_config(width, depth))
     opt = torch.optim.Adam(model.parameters(), lr=lr)
 
     history = []
@@ -254,7 +267,23 @@ def figure_convergence(coll_rows, width_rows):
     savefig(fig, "heat_convergence.png")
 
 
-def main(quick=False):
+def figures_from_committed():
+    """Both figures from the committed checkpoint and CSVs -- no training.
+
+    The heatmap needs the trained field itself (checkpoints/heat_default.pt);
+    the convergence panels need only the sweep logs.
+    """
+    model, meta = load_model(ckpt_path(CKPT))
+    print(f"loaded {CKPT}: {meta}")
+    figure_error_heatmap(model)
+    figure_convergence(read_csv("heat_collocation.csv"), read_csv("heat_width.csv"))
+
+
+def main(quick=False, figures=False):
+    if figures:
+        figures_from_committed()
+        return
+
     if quick:
         print("[quick] tiny run for a smoke check")
         model, hist = train(n_interior=500, width=32, steps=300, verbose=True)
@@ -265,9 +294,18 @@ def main(quick=False):
     print("Heat equation PINN: default network")
     print("=" * 64)
     t0 = time.time()
-    model, hist = train(n_interior=4000, width=128, steps=5000, verbose=True)
+    model, hist = train(n_interior=DEFAULTS["n_interior"], width=DEFAULTS["width"],
+                        steps=DEFAULTS["steps"], verbose=True)
     print(f"trained default in {time.time() - t0:.0f}s")
     figure_error_heatmap(model)
+    save_model(
+        model, ckpt_path(CKPT),
+        model_config(DEFAULTS["width"], DEFAULTS["depth"]),
+        meta={"experiment": "heat", "steps": DEFAULTS["steps"],
+              "n_interior": DEFAULTS["n_interior"],
+              "rel_l2": f"{rel_l2_error(model):.6e}"},
+    )
+    print(f"saved checkpoint {CKPT}")
     write_csv(
         "heat_training.csv",
         ["step", "loss", "rel_l2"],
@@ -298,5 +336,7 @@ def main(quick=False):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--quick", action="store_true")
+    ap.add_argument("--figures", action="store_true",
+                    help="replay the figures from committed artifacts, no training")
     args = ap.parse_args()
-    main(quick=args.quick)
+    main(quick=args.quick, figures=args.figures)

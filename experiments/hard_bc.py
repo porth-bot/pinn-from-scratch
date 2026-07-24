@@ -42,7 +42,7 @@ import argparse
 import numpy as np
 import torch
 
-from common import plt, savefig, write_csv
+from common import ckpt_path, plt, read_csv, savefig, write_csv
 from heat import (
     ALPHA,
     T_RANGE,
@@ -54,8 +54,18 @@ from heat import (
     rel_l2_error,
     train as train_soft,
 )
+from pinn.checkpoints import load_model, save_model
 from pinn.losses import interior_points
 from pinn.model import MLP, set_seed
+
+CKPT = "hard_bc_ansatz.pt"
+
+
+def model_config(width=128, depth=4):
+    """Constructor kwargs for the *inner* MLP. ``HardConstraintNet`` holds no
+    parameters of its own -- it is a fixed differentiable wrapper -- so the
+    checkpoint stores the net and the ansatz is re-applied on load."""
+    return dict(in_dim=2, out_dim=1, width=width, depth=depth, activation="tanh")
 
 
 class HardConstraintNet(torch.nn.Module):
@@ -152,7 +162,27 @@ def _soft_history_with_constraints(seed, n_interior, width, depth, steps, lr):
     return model, hist, ic_err, bc_err
 
 
-def main(quick=False):
+def figures_from_committed():
+    """The figure from logs/hard_bc.csv + the committed ansatz checkpoint."""
+    rows = read_csv("hard_bc.csv")
+    soft = [r for r in rows if r["method"] == "soft"]
+    hard = [r for r in rows if r["method"] == "hard"]
+    soft_hist = [(int(r["step"]), float(r["loss"]), float(r["rel_l2"]))
+                 for r in soft]
+    hard_hist = [(int(r["step"]), float(r["loss"]), float(r["rel_l2"]),
+                  float(r["ic_err"]), float(r["bc_err"])) for r in hard]
+    soft_ic, soft_bc = float(soft[-1]["ic_err"]), float(soft[-1]["bc_err"])
+
+    net, meta = load_model(ckpt_path(CKPT))
+    print(f"loaded {CKPT}: {meta}")
+    figure(soft_hist, hard_hist, soft_ic, soft_bc, HardConstraintNet(net))
+
+
+def main(quick=False, figures=False):
+    if figures:
+        figures_from_committed()
+        return
+
     seed = 0
     if quick:
         n_interior, width, depth, steps, lr = 500, 32, 3, 500, 1e-3
@@ -197,8 +227,18 @@ def main(quick=False):
             for h in hard_hist
         ]
         write_csv("hard_bc.csv", fields, rows)
+        save_model(
+            hard_model.net, ckpt_path(CKPT), model_config(width, depth),
+            meta={"experiment": "hard_bc", "ansatz": "g(x) + x(1-x) t N(x,t)",
+                  "steps": steps, "rel_l2": f"{hard_final[2]:.6e}"},
+        )
+        print(f"saved checkpoint {CKPT}")
 
-    # ------------------------------------------------------------------ figure
+    figure(soft_hist, hard_hist, soft_ic, soft_bc, hard_model)
+
+
+def figure(soft_hist, hard_hist, soft_ic, soft_bc, hard_model):
+    """Three panels from the two histories plus the trained ansatz (panel c)."""
     fig, axes = plt.subplots(1, 3, figsize=(12, 3.6), constrained_layout=True)
 
     # (a) rel-L2 convergence
@@ -244,5 +284,7 @@ def main(quick=False):
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--quick", action="store_true")
+    p.add_argument("--figures", action="store_true",
+                   help="replay the figure from committed artifacts, no training")
     args = p.parse_args()
-    main(quick=args.quick)
+    main(quick=args.quick, figures=args.figures)

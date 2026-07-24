@@ -29,6 +29,17 @@ plt.rcParams.update(
 _HERE = os.path.dirname(__file__)
 FIGDIR = os.path.join(_HERE, "..", "figures")
 LOGDIR = os.path.join(_HERE, "..", "logs")
+CKPTDIR = os.path.join(_HERE, "..", "checkpoints")
+
+
+def ckpt_path(name):
+    """Absolute path of a committed model checkpoint in ``checkpoints/``.
+
+    The field figures (error heatmaps, slices, profiles) are pictures of a
+    trained network, so a CSV cannot regenerate them -- the weights ship
+    instead. See ``pinn/checkpoints.py`` for the file format.
+    """
+    return os.path.abspath(os.path.join(CKPTDIR, name))
 
 
 def savefig(fig, name):

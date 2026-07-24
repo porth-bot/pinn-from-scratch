@@ -200,7 +200,8 @@ def make_figure():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--quick", action="store_true")
-    ap.add_argument("--figure-only", action="store_true",
+    ap.add_argument("--figure-only", "--figures", dest="figure_only",
+                    action="store_true",
                     help="regenerate the figure/table from committed CSVs")
     args = ap.parse_args()
     if not args.figure_only:

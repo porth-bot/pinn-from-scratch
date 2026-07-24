@@ -192,10 +192,33 @@ def _make_figure(rows, pinn):
     savefig(fig, "crank_nicolson.png")
 
 
+def figures_from_committed():
+    """Rebuild the figure from logs/crank_nicolson.csv rather than re-timing.
+
+    Both axes of this figure are wall-clock, so a rerun on another machine
+    moves every point; the committed CSV is the measurement, and re-solving
+    (milliseconds) would only overwrite it with a different one.
+    """
+    rows = [
+        {"nx": int(r["nx"]), "nt": int(r["nt"]), "rel_l2": float(r["rel_l2"]),
+         "seconds": float(r["seconds"]), "order": r["order"]}
+        for r in read_csv("crank_nicolson.csv")
+    ]
+    pinn = _pinn_reference()
+    if pinn is None:
+        raise SystemExit("logs/optimizer_adam.csv missing: no PINN reference to plot")
+    _make_figure(rows, pinn)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--quick", action="store_true")
+    ap.add_argument("--figures", action="store_true",
+                    help="rebuild the figure from the committed CSV, no re-timing")
     args = ap.parse_args()
+    if args.figures:
+        figures_from_committed()
+        return
     run(quick=args.quick)
 
 

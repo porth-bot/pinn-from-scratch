@@ -115,8 +115,9 @@ import time
 import numpy as np
 import torch
 
-from common import plt, savefig, write_csv
+from common import ckpt_path, plt, read_csv, savefig, write_csv
 from pinn import derivatives as D
+from pinn.checkpoints import load_model, save_model
 from pinn.features import FourierMLP
 from pinn.losses import boundary_points, initial_points, interior_points
 from pinn.model import MLP, set_seed
@@ -220,22 +221,33 @@ def model_sine_coefficients(model, n_modes: int = 24, n: int = 1024, t: float = 
 # ---------------------------------------------------------------------------
 # Models + evaluation
 # ---------------------------------------------------------------------------
+def model_config(kind: str, seed: int = 0) -> dict:
+    """Constructor kwargs for one arm -- the single source of truth shared by
+    :func:`build_model` and the committed checkpoints.
+
+    ``sigma`` is stored as a list so the checkpoint stays plain data (loadable
+    under ``weights_only=True``); rebuilding a FourierMLP with a different
+    sigma or feature_seed would silently give a different frozen projection,
+    which is exactly why the config travels with the weights.
+    """
+    if kind == "plain":
+        return dict(in_dim=2, out_dim=1, width=WIDTH, depth=DEPTH,
+                    activation="tanh")
+    if kind == "fourier":
+        return dict(in_dim=2, out_dim=1, width=WIDTH, depth=DEPTH,
+                    n_features=N_FEATURES, sigma=list(SIGMA), feature_seed=seed)
+    raise ValueError(f"unknown model kind {kind!r}")
+
+
+def ckpt_name(kind: str, k: int) -> str:
+    return f"spectral_{kind}_k{k}.pt"
+
+
 def build_model(kind: str, seed: int = 0):
     """``kind`` in {"plain", "fourier"} -- identical width/depth either way."""
     set_seed(seed)
-    if kind == "plain":
-        return MLP(in_dim=2, out_dim=1, width=WIDTH, depth=DEPTH, activation="tanh")
-    if kind == "fourier":
-        return FourierMLP(
-            in_dim=2,
-            out_dim=1,
-            width=WIDTH,
-            depth=DEPTH,
-            n_features=N_FEATURES,
-            sigma=SIGMA,
-            feature_seed=seed,
-        )
-    raise ValueError(f"unknown model kind {kind!r}")
+    cfg = model_config(kind, seed)
+    return MLP(**cfg) if kind == "plain" else FourierMLP(**cfg)
 
 
 def _eval_grid(nx=201, nt=101):
@@ -544,7 +556,49 @@ def figure_failure_and_fix(k_fail, runs, long_runs, t_slice=0.5):
 
 
 # ---------------------------------------------------------------------------
-def main(quick=False):
+# Replay: every figure from the committed logs + checkpoints, no training
+# ---------------------------------------------------------------------------
+def _histories_from_long_csv():
+    """``{(model_name, k): [(step, loss, rel_l2), ...]}`` from spectral_long.csv.
+
+    The sweep's own histories are what panels (b) and (c) plot, and they are
+    already committed -- only panel (a), which draws the *field* at k_fail,
+    needs the weights.
+    """
+    hist: dict[tuple[str, int], list] = {}
+    for r in read_csv("spectral_long.csv"):
+        key = (r["model"], int(r["k"]))
+        hist.setdefault(key, []).append(
+            (int(r["step"]), float(r["loss"]), float(r["rel_l2"]))
+        )
+    return hist
+
+
+def figures_from_committed():
+    figure_regression(read_csv("spectral_regression.csv"))
+    figure_pinn_sweep(read_csv("spectral_pinn.csv"))
+
+    k_fail = max(K_VALUES)
+    hist = _histories_from_long_csv()
+    # figure_failure_and_fix reads models only at k_fail (panel a) and
+    # histories everywhere else, so the other entries carry None for the model.
+    runs = {}
+    for kind in ("plain", "fourier"):
+        for k in LONG_CHECK_KS:
+            model = None
+            if k == k_fail:
+                model, meta = load_model(ckpt_path(ckpt_name(kind, k)))
+                print(f"loaded {ckpt_name(kind, k)}: {meta}")
+            runs[(kind, k)] = (model, hist[(kind, k)])
+    long_runs = {k: (None, hist[("plain_3x", k)]) for k in LONG_CHECK_KS}
+    figure_failure_and_fix(k_fail, runs, long_runs)
+
+
+def main(quick=False, figures=False):
+    if figures:
+        figures_from_committed()
+        return
+
     if quick:
         print("[quick] smoke run")
         _m, hist = train_pinn(k=4, kind="plain", steps=200, verbose=True)
@@ -574,6 +628,15 @@ def main(quick=False):
     figure_pinn_sweep(sweep_rows)
 
     k_fail = max(K_VALUES)
+    for kind in ("plain", "fourier"):
+        model, hist = runs[(kind, k_fail)]
+        save_model(
+            model, ckpt_path(ckpt_name(kind, k_fail)), model_config(kind, 0),
+            meta={"experiment": "spectral_bias", "kind": kind, "k": k_fail,
+                  "steps": STEPS, "rel_l2": f"{hist[-1][2]:.6e}"},
+        )
+        print(f"saved checkpoint {ckpt_name(kind, k_fail)}")
+
     print("\n" + "=" * 70)
     print("(C) Slow, or stuck? Rerun the plain net at 3x the step budget")
     print("=" * 70)
@@ -609,5 +672,7 @@ def main(quick=False):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--quick", action="store_true")
+    ap.add_argument("--figures", action="store_true",
+                    help="replay the figures from committed artifacts, no training")
     args = ap.parse_args()
-    main(quick=args.quick)
+    main(quick=args.quick, figures=args.figures)

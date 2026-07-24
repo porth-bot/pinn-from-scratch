@@ -44,7 +44,8 @@ What this script measures.
     (3) The *concentration* of the error at the shock: mean error and the
         share of total squared error inside the thin band ``|x| <= 0.1``.
 
-Run:  python experiments/burgers.py            # full train + figures (slow)
+Run:  python experiments/burgers.py --figures   # replay figures, no training
+      python experiments/burgers.py            # full train + figures (slow)
       python experiments/burgers.py --quick     # tiny run, for a smoke check
 """
 
@@ -56,8 +57,9 @@ import time
 import numpy as np
 import torch
 
-from common import plt, savefig, write_csv
+from common import ckpt_path, plt, savefig, write_csv
 from pinn import derivatives as D
+from pinn.checkpoints import load_model, save_model
 from pinn.losses import boundary_points, initial_points, interior_points
 from pinn.model import MLP, set_seed
 
@@ -148,6 +150,16 @@ def rel_l2_error(model, nx=201, nt=101):
 # ---------------------------------------------------------------------------
 # Training
 # ---------------------------------------------------------------------------
+DEFAULTS = dict(n_interior=10000, width=48, depth=6, steps=20000)
+CKPT = "burgers_default.pt"
+
+
+def model_config(width=48, depth=6):
+    """Constructor kwargs for the field -- the single source of truth shared by
+    training and by the committed checkpoint."""
+    return dict(in_dim=2, out_dim=1, width=width, depth=depth, activation="tanh")
+
+
 def train(
     n_interior=10000,
     width=48,
@@ -178,7 +190,7 @@ def train(
     bc = torch.cat([left, right], dim=0)
     bc_target = torch.zeros(bc.shape[0], 1)
 
-    model = MLP(in_dim=2, out_dim=1, width=width, depth=depth, activation="tanh")
+    model = MLP(**model_config(width, depth))
     opt = torch.optim.Adam(model.parameters(), lr=lr)
 
     history = []
@@ -295,7 +307,24 @@ def shock_concentration(model, band=0.1, nx=401, nt=201):
     return rows
 
 
-def main(quick=False):
+def figures_from_committed():
+    """Both figures from the committed checkpoint -- no training.
+
+    Burgers is the repo's expensive run (~30 min of Adam), and both of its
+    figures are pictures of the trained field against the Cole-Hopf truth, so
+    the weights are what has to ship.
+    """
+    model, meta = load_model(ckpt_path(CKPT))
+    print(f"loaded {CKPT}: {meta}")
+    figure_error_heatmap(model)
+    figure_slices(model)
+
+
+def main(quick=False, figures=False):
+    if figures:
+        figures_from_committed()
+        return
+
     if quick:
         print("[quick] tiny run for a smoke check")
         model, hist = train(n_interior=1000, width=32, depth=4, steps=500,
@@ -313,6 +342,14 @@ def main(quick=False):
 
     figure_error_heatmap(model)
     figure_slices(model)
+    save_model(
+        model, ckpt_path(CKPT),
+        model_config(DEFAULTS["width"], DEFAULTS["depth"]),
+        meta={"experiment": "burgers", "steps": DEFAULTS["steps"],
+              "n_interior": DEFAULTS["n_interior"],
+              "rel_l2": f"{rel_l2_error(model):.6e}"},
+    )
+    print(f"saved checkpoint {CKPT}")
     write_csv(
         "burgers_training.csv",
         ["step", "loss", "rel_l2"],
@@ -329,5 +366,7 @@ def main(quick=False):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--quick", action="store_true")
+    ap.add_argument("--figures", action="store_true",
+                    help="replay the figures from committed artifacts, no training")
     args = ap.parse_args()
-    main(quick=args.quick)
+    main(quick=args.quick, figures=args.figures)

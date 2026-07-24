@@ -30,16 +30,19 @@ stays stable and improves. Same adaptive machinery
 Run:  python experiments/adaptive_collocation.py   (~12 min on CPU)
 """
 
+import argparse
+
 import numpy as np
 import torch
 
-from common import plt, savefig, write_csv
+from common import ckpt_path, plt, savefig, write_csv
 from pinn.losses import (
     adaptive_interior_points,
     boundary_points,
     initial_points,
     interior_points,
 )
+from pinn.checkpoints import load_model, save_model
 from pinn.model import MLP, set_seed
 
 # Reuse the Burgers problem definition and its Cole-Hopf ground truth.
@@ -66,10 +69,24 @@ SHOCK_BAND = 0.1        # |x| <= this defines the shock region for the error spl
 N_CAND = 20000          # candidate pool for the residual-density draw
 
 
+ARMS = ("uniform", "resample", "rar")
+
+
+def model_config():
+    """Constructor kwargs shared by the three arms (identical by design -- the
+    arms differ only in where their collocation points go) and by the
+    committed checkpoints."""
+    return dict(in_dim=2, out_dim=1, width=WIDTH, depth=DEPTH, activation="tanh")
+
+
+def ckpt_name(mode):
+    return f"adaptive_{mode}.pt"
+
+
 def _build(seed):
     """Model + shared uniform base + IC/BC tensors (identical across arms)."""
     set_seed(seed)
-    model = MLP(in_dim=2, out_dim=1, width=WIDTH, depth=DEPTH, activation="tanh")
+    model = MLP(**model_config())
     gen = torch.Generator().manual_seed(seed)
     base = interior_points(N_TOTAL, X_RANGE, T_RANGE, gen)
     ic = initial_points(512, X_RANGE, T_RANGE[0], gen)
@@ -159,18 +176,37 @@ def figure(models, rar_points):
     savefig(fig, "adaptive_collocation.png")
 
 
-def main():
+def figures_from_committed():
+    """The figure from the three committed arm checkpoints -- no training.
+
+    The table lives in logs/adaptive_collocation.csv; the figure is three
+    |error| *fields* plus the residual-density draw, so it needs the weights.
+    The draw itself is seeded and cheap (one residual pass over the candidate
+    pool), so it is recomputed rather than stored.
+    """
+    models = {}
+    for mode in ARMS:
+        models[mode], meta = load_model(ckpt_path(ckpt_name(mode)))
+        print(f"loaded {ckpt_name(mode)}: {meta}")
+    figure(models, _final_adaptive_points(models["rar"]))
+
+
+def main(figures=False):
+    if figures:
+        figures_from_committed()
+        return
+
     print(f"Burgers RAD/RAR: N={N_TOTAL}, steps={STEPS}, warmup={WARMUP}, "
           f"resample/add every {RESAMPLE} after warmup\n")
     models, evals = {}, {}
-    for mode in ("uniform", "resample", "rar"):
+    for mode in ARMS:
         models[mode], evals[mode] = _train(mode)
 
     rar_points = _final_adaptive_points(models["rar"])
     frac_in_band = float((rar_points[:, 0].abs() <= SHOCK_BAND).float().mean())
 
     rows = []
-    for mode in ("uniform", "resample", "rar"):
+    for mode in ARMS:
         band, off = _shock_split(models[mode])
         rows.append({
             "arm": mode,
@@ -190,8 +226,18 @@ def main():
 
     write_csv("adaptive_collocation.csv",
               ["arm", "rel_l2", "shock_band_mae", "off_shock_mae"], rows)
+    for mode in ARMS:
+        save_model(
+            models[mode], ckpt_path(ckpt_name(mode)), model_config(),
+            meta={"experiment": "adaptive_collocation", "arm": mode,
+                  "steps": STEPS, "n_interior": N_TOTAL},
+        )
+        print(f"saved checkpoint {ckpt_name(mode)}")
     figure(models, rar_points)
 
 
 if __name__ == "__main__":
-    main()
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--figures", action="store_true",
+                    help="replay the figure from committed artifacts, no training")
+    main(figures=ap.parse_args().figures)
