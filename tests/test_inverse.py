@@ -171,5 +171,6 @@ def test_alpha_stays_positive_through_the_log_parameterization():
         loss = torch.exp(log_alpha) * 3.0  # pushes alpha down as hard as it can
         loss.backward()
         opt.step()
-    assert float(torch.exp(log_alpha)) > 0.0
-    assert float(torch.exp(log_alpha)) < ALPHA_INIT  # it did move downward
+    alpha = float(torch.exp(log_alpha.detach()))
+    assert alpha > 0.0
+    assert alpha < ALPHA_INIT  # it did move downward
