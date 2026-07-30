@@ -351,6 +351,83 @@ needs the analytic $g$ and a boundary-vanishing envelope), whereas a penalty
 term is added mechanically to any BC. Hard constraints remove a tuning knob and
 guarantee exactness; they do not come free.
 
+### 8. The inverse problem: recover the coefficient from noisy data (`experiments/inverse.py`)
+
+Everything above is a *forward* problem, and §6 says plainly that a classical
+solver wins those. This is the other direction, and it is the setting PINNs are
+actually built for: the same heat problem, but $\alpha$ is **unknown** and the
+only information is $N$ scattered noisy samples $y_i = u(x_i,t_i) + \varepsilon_i$.
+No initial condition, no boundary condition — in an inverse problem the data
+replaces them, and a finite-difference solver has nothing to march from.
+
+The change to a PINN is one `nn.Parameter` and one extra entry in the
+optimizer's list, because $\alpha$ already sits inside a term autograd is
+differentiating:
+
+$$L(\theta, \alpha) = \big\langle (u_t - \alpha u_{xx})^2 \big\rangle_{\text{collocation}} + w_d \big\langle (u_\theta - y)^2 \big\rangle_{\text{data}}.$$
+
+We optimize $\log\alpha$, so $\alpha>0$ by construction and a step is a
+*relative* change — necessary because the run starts deliberately wrong, at
+$4\alpha$. The classical route to the same answer is an outer loop over full
+forward solves, or a hand-derived adjoint.
+
+Starting from $\alpha = 0.2$, with 200 samples at $\sigma = 0.02$ (2% of the
+initial amplitude), the recovered value is $\hat\alpha = 0.0509$ against a true
+0.05 — **1.9%** — and most of the trip happens in the first 1,000 of 6,000 Adam
+steps ($0.2006 \to 0.0660 \to 0.0523$ at steps 0, 500, 1,000):
+
+| $\sigma$ (at $N=200$) | 0 | 0.01 | 0.05 | 0.1 |
+| --- | ---: | ---: | ---: | ---: |
+| $\hat\alpha$ | 0.0498 | 0.0503 | 0.0526 | 0.0554 |
+| error in $\alpha$ | 0.5% | 0.7% | 5.2% | **10.8%** |
+
+| $N$ (at $\sigma=0.02$) | 25 | 50 | 100 | 200 | 400 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| error in $\alpha$ | 6.3% | 1.0% | 0.7% | 1.9% | 0.6% |
+
+| window $t \leq t_{\max}$ | 0.1 | 0.25 | 0.5 | 1.0 |
+| --- | ---: | ---: | ---: | ---: |
+| error in $\alpha$ | 7.1% | 4.3% | 3.2% | 1.9% |
+
+<p align="center"><img src="figures/inverse.png" width="980"></p>
+
+Three honest readings.
+
+**Noise passes through roughly one-for-one.** Doubling $\sigma$ from 0.05 to 0.1
+doubles the error, 5.2% → 10.8%, and the whole sweep is close to
+$|\Delta\alpha|/\alpha \approx \sigma$ in units of the solution's amplitude. That
+is the useful summary: this method does not amplify observation noise, and it
+does not average it away either.
+
+**Data volume saturates immediately.** 25 points is visibly short (6.3%);
+from 50 on, every cell is between 0.6% and 1.9% and the ordering inside that
+range is not meaningful — these are **single-seed** runs and 1–2% is the
+run-to-run scatter of the Adam trajectory (visible directly in the trace's late
+wobble, panel a). The claim is "tens of points suffice here", not "400 beats
+200".
+
+**Identifiability is about the time window, not the point count.** The heat
+equation has an exact degeneracy, $u(x,t;\alpha) = u(x,\alpha t;1)$: scaling
+$\alpha$ is rescaling time. So $\alpha$ is recoverable only from *absolute*
+time labels, and only insofar as the observations span enough time for the decay
+envelope $e^{-\alpha(k\pi)^2 t}$ to show. Shrink the window with the point count
+and noise fixed and the error grows monotonically, 1.9% → 7.1%, with the field
+error growing alongside it (0.9% → 3.1%). Same data volume, less information.
+
+The control that says which term is doing the work: set $w_d = 0$ and the
+objective is the residual alone, which *every* solution of the heat equation
+satisfies for its own $\alpha$ — including $u \equiv 0$, which satisfies it for
+all of them. The optimizer duly returns a flat field and leaves $\alpha$ at its
+initialization — in the short configuration the test uses, $0.194$ against a
+true 0.05 with 96% field error.
+`tests/test_inverse.py` asserts exactly that, next to the identity that makes
+recovery possible in the first place: on the true solution the residual measured
+with a wrong diffusivity is exactly $(\alpha_{\text{true}} - \alpha)\,u_{xx}$.
+
+One caveat worth stating: the recovered *field* here (0.9–4.5% relative $L^2$) is
+worse than the forward solve's 0.36% in §1, and it should be — it is fitted to
+200 noisy points with no boundary data instead of to an exactly known IC/BC.
+
 ## Reproduce
 
 Every figure, from a clean clone, without training anything:
@@ -359,7 +436,7 @@ Every figure, from a clean clone, without training anything:
 python -m venv .venv && source .venv/bin/activate
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt && pip install -e .
-./reproduce.sh                  # tests, then all 11 figures: ~1 min
+./reproduce.sh                  # tests, then all 12 figures: ~1 min
 ```
 
 Training this repo end to end is about three hours of CPU, so the artifacts
@@ -380,7 +457,7 @@ committed rather than regenerated on demand.
 To actually retrain:
 
 ```bash
-pytest -q                       # 98 tests, ~40 s
+pytest -q                       # 109 tests, ~1 min
 cd experiments
 python heat.py                  # ~25 min (default solve + both sweeps)
 python burgers.py               # ~30 min (Cole-Hopf truth + PINN train)
@@ -389,6 +466,7 @@ python optimizer_study.py       # ~2.5 min (Adam vs L-BFGS vs hybrid)
 python adaptive_collocation.py  # ~12 min (RAD/RAR: 3-arm collocation study)
 python crank_nicolson.py        # <1 s   (classical FD baseline vs the PINN)
 python hard_bc.py               # ~14 min (hard-constraint ansatz vs soft penalty)
+python inverse.py               # ~40 min (inverse problem: 3 sweeps, 14 solves)
 ```
 
 Every script takes `--quick` for a fast smoke run, and `--figures` to skip
@@ -434,11 +512,12 @@ so the reproduction path cannot quietly rot.
   accuracy, and convergence *guarantees* (the PINN offers a nonconvex loss and
   no error order). **This repo is a study of the method's mechanics and
   failure modes, not an argument that PINNs should solve these PDEs.**
-- **Where PINNs actually earn their place** — inverse problems (recover $\nu$
-  or $\alpha(x)$ from sparse data by adding one data term, no adjoint solver
-  to hand-derive), high dimension (no mesh to explode), and irregular geometry
-  — are **not demonstrated here**. The inverse problem is the top roadmap
-  item, and it is the setting where PINNs are genuinely competitive.
+- **Where PINNs actually earn their place**: the inverse problem is now
+  measured in §8 — a coefficient recovered from 200 noisy point samples by
+  adding one data term and one `nn.Parameter`, with no boundary data and no
+  adjoint solver to hand-derive. The other two claims in this family, **high
+  dimension** (no mesh to explode) and **irregular geometry**, are still not
+  demonstrated here.
 - **1D + time only.** No 2D spatial problems. (L-BFGS, the classic PINN
   optimizer, is now studied in §4, residual-adaptive collocation in §5, and hard
   boundary-condition enforcement in §7 — all three were on this list and have

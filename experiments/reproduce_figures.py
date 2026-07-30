@@ -7,7 +7,7 @@ them back into the figures:
 
     logs/*.csv                  -> heat_convergence, spectral_regression,
                                    spectral_pinn, optimizer_study,
-                                   crank_nicolson
+                                   crank_nicolson, inverse
     logs + checkpoints/*.pt     -> spectral_fix, hard_bc
     checkpoints/*.pt            -> heat_error, burgers_error, burgers_slices,
                                    adaptive_collocation
@@ -35,6 +35,7 @@ import burgers
 import crank_nicolson
 import hard_bc
 import heat
+import inverse
 import optimizer_study
 import spectral_bias
 
@@ -55,6 +56,7 @@ FIGURES = (
     "crank_nicolson.png",         # crank_nicolson, from CSV
     "adaptive_collocation.png",   # adaptive_collocation, from 3 checkpoints
     "hard_bc.png",                # hard_bc, from CSV + the ansatz checkpoint
+    "inverse.png",                # inverse, from the two sweep CSVs
 )
 
 LOG_FILES = (
@@ -62,6 +64,7 @@ LOG_FILES = (
     "spectral_regression.csv", "spectral_pinn.csv", "spectral_long.csv",
     "optimizer_adam.csv", "optimizer_lbfgs.csv", "optimizer_hybrid.csv",
     "crank_nicolson.csv", "hard_bc.csv", "adaptive_collocation.csv",
+    "inverse.csv", "inverse_trace.csv",
 )
 
 CKPT_FILES = (
@@ -99,6 +102,7 @@ def main():
         ("adaptive collocation (RAD vs RAR)",
          adaptive_collocation.figures_from_committed),
         ("hard boundary conditions", hard_bc.figures_from_committed),
+        ("inverse problem (alpha recovery)", inverse.figures_from_committed),
     ):
         print(f"\n>>> {label}")
         fn()
