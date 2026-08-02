@@ -77,8 +77,13 @@ mode is gone by mid-time while the fundamental lingers: a clean multi-scale
 target.
 
 The default network (width 128, 4k interior points, 5k Adam steps) reaches
-**relative L2 = 3.6e-3**. The two convergence sweeps say something more
-interesting than "it converges":
+**relative L2 = 3.6e-3**. The two convergence sweeps below hold the optimizer
+budget at **3k steps** instead, so that a cell differs from its neighbours in
+one thing only; that shorter budget is why the width-128 / 4k-point cell they
+share reads 4.20e-3 rather than the headline 3.6e-3. It reads
+$4.202991\times10^{-3}$ in *both* logs, to every digit — the same seeded run,
+which is the cheapest available check that the two sweeps are comparable at
+all. They say something more interesting than "it converges":
 
 | interior points | 1k | 2k | 4k | 8k | 16k |
 |---|---|---|---|---|---|
@@ -545,9 +550,10 @@ buried.
 | Repo | Built from scratch |
 | --- | --- |
 | **pinn-from-scratch** *(this repo)* | Physics-informed networks: exact autograd PDE residuals against closed-form solutions |
-| [mcmc-from-scratch](https://github.com/porth-bot/mcmc-from-scratch) | Metropolis-Hastings, Gibbs, HMC, MALA, parallel tempering — validated against exact posteriors |
+| [mcmc-from-scratch](https://github.com/porth-bot/mcmc-from-scratch) | Metropolis-Hastings, Gibbs, HMC, MALA, NUTS, parallel tempering — validated against exact posteriors |
 | [gp-from-scratch](https://github.com/porth-bot/gp-from-scratch) | GP regression, kernels with hand-derived gradients, ML-II, and the NTK/NNGP wide-network correspondence |
 | [grokking-transformer](https://github.com/porth-bot/grokking-transformer) | A transformer that groks modular arithmetic, and the Fourier circuit it learns |
+| [diffusion-from-scratch](https://github.com/porth-bot/diffusion-from-scratch) | Score matching, reverse-time samplers, and the probability-flow ODE — against exact scores at every noise level |
 
 The load-bearing link is to gp-from-scratch: §3's spectral bias is not a
 metaphor about the NTK but an application of it, and the
