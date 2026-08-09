@@ -81,6 +81,16 @@ what it used, so the trade-off is visible rather than hidden. The heat and
 Burgers solves both use `w_r = w_ic = w_bc = 1` and succeed; the honest reading
 is that these problems are forgiving, not that weighting is solved.
 
+That last sentence is now measured rather than assumed, in README §9: across
+four decades of `w` no setting breaks the heat solve and `w = 1` sits inside
+the optimum, so the default was never costing anything measurable; the `u == 0`
+failure described above is real but needs `w_ic <= 1e-4` to appear, three
+decades below any weight one would write; and `w_bc` can be set to 0 outright
+at a cost comparable to the seed spread. The premise above that the residual
+term is the one that dominates is the part that did *not* survive contact with
+the numbers -- `|grad L_r|` is the *smaller* gradient on 85% of the logged
+steps, which is also why the standard adaptive fix runs away here.
+
 ---
 
 ## 2. The heat equation and its exact Fourier series

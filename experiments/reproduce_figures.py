@@ -36,6 +36,7 @@ import crank_nicolson
 import hard_bc
 import heat
 import inverse
+import loss_weighting
 import optimizer_study
 import spectral_bias
 
@@ -57,6 +58,7 @@ FIGURES = (
     "adaptive_collocation.png",   # adaptive_collocation, from 3 checkpoints
     "hard_bc.png",                # hard_bc, from CSV + the ansatz checkpoint
     "inverse.png",                # inverse, from the two sweep CSVs
+    "loss_weighting.png",         # loss_weighting, from its two CSVs
 )
 
 LOG_FILES = (
@@ -65,6 +67,7 @@ LOG_FILES = (
     "optimizer_adam.csv", "optimizer_lbfgs.csv", "optimizer_hybrid.csv",
     "crank_nicolson.csv", "hard_bc.csv", "adaptive_collocation.csv",
     "inverse.csv", "inverse_trace.csv",
+    "loss_weighting.csv", "loss_weighting_trace.csv",
 )
 
 CKPT_FILES = (
@@ -103,6 +106,8 @@ def main():
          adaptive_collocation.figures_from_committed),
         ("hard boundary conditions", hard_bc.figures_from_committed),
         ("inverse problem (alpha recovery)", inverse.figures_from_committed),
+        ("loss weighting (residual vs IC/BC balance)",
+         loss_weighting.figures_from_committed),
     ):
         print(f"\n>>> {label}")
         fn()

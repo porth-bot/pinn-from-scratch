@@ -433,6 +433,100 @@ One caveat worth stating: the recovered *field* here (0.9–4.5% relative $L^2$)
 worse than the forward solve's 0.36% in §1, and it should be — it is fitted to
 200 noisy points with no boundary data instead of to an exactly known IC/BC.
 
+### 9. What the loss weights actually decide (`experiments/loss_weighting.py`)
+
+§7 calls $w_{\text{ic}}$ and $w_{\text{bc}}$ "a real knob" and the theory doc
+§1 calls balancing them "a genuine difficulty", and every solve above has run at
+$w_{\text{ic}}=w_{\text{bc}}=1$ without measuring what that choice costs. This
+does: 60 solves, three seeds each, scored against the exact Fourier solution.
+
+Two metrics, because one is not enough. Relative $L^2$ saturates near 1 for
+*any* badly wrong field, so it cannot separate "fit the wrong shape" from
+"learned nothing"; the amplitude ratio
+$\lVert u_\theta\rVert / \lVert u_{\text{exact}}\rVert$ can — a collapse reads
+$\approx 0$, a merely-bad fit reads $\approx 1$.
+
+<p align="center"><img src="figures/loss_weighting.png" width="980"></p>
+
+**The seed spread sets the resolution, so it goes first.** The widest
+single-arm band over three seeds is $6.8\times$ ($w=10$: 0.0035 to 0.0235).
+Any weight effect smaller than that is not measurable here, and reporting one
+would be reading noise.
+
+| $w_{\text{ic}}=w_{\text{bc}}=w$ | 0.01 | 0.1 | 1 | 10 | 100 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| rel $L^2$ (median) | 0.0556 | 0.0193 | **0.0049** | **0.0037** | 0.0311 |
+| amplitude ratio | 0.996 | 1.001 | 1.000 | 1.001 | 0.986 |
+
+**(1) No weight in four decades breaks the solve, and $w=1$ is already inside
+the optimum.** The sweep spans $15\times$ in median error (0.0556 at $w=0.01$,
+down to 0.0037 at $w=10$, back up to 0.0311 at $w=100$) — a real effect, but
+only about twice the seed spread, and with no collapse anywhere: the amplitude
+ratio never leaves [0.986, 1.001]. The best median is $w=10$, but its seed band
+[0.0035, 0.0235] overlaps $w=1$'s [0.0042, 0.0092], so the repo's default was
+never measurably costing anything. **(2) Sweeping the two weights separately cannot
+resolve the difference between them**: $8.1\times$ across the $w_{\text{ic}}$
+sweep and $3.9\times$ across the $w_{\text{bc}}$ sweep, both against that
+$6.8\times$ seed spread. A single-seed version of this arm would have produced
+a confident ordering out of noise.
+
+**(3) The predicted failure is real, and it is a cliff three decades below any
+weight anyone would write.** $u\equiv 0$ solves the PDE exactly and satisfies
+the homogeneous walls exactly, so the initial condition is the only term ruling
+it out (`tests/test_loss_weighting.py` checks all three directly, on a real
+network with its output layer zeroed). Starving each constraint in turn, down
+to exactly 0:
+
+| starved weight | $10^{-2}$ | $10^{-4}$ | $10^{-6}$ | 0 |
+| --- | ---: | ---: | ---: | ---: |
+| $w_{\text{ic}}\to 0$: amplitude ratio | 0.986 | 0.001 | 0.000 | **0.000** |
+| $w_{\text{ic}}\to 0$: rel $L^2$ | 0.0836 | 0.9994 | 0.9997 | 0.9997 |
+| $w_{\text{bc}}\to 0$: amplitude ratio | 1.001 | 1.015 | 1.001 | **1.002** |
+| $w_{\text{bc}}\to 0$: rel $L^2$ | 0.0144 | 0.0342 | 0.0142 | 0.0256 |
+
+The IC weight is not a knob but a cliff: intact at $w_{\text{ic}}\ge 10^{-2}$,
+total collapse at $w_{\text{ic}}\le 10^{-4}$, with $L_{\text{ic}}$ sitting at
+0.635 — the full energy of the initial condition, exactly the value the trivial
+field gives. **And the boundary penalty can be deleted outright.** At
+$w_{\text{bc}}=0$ the solve still lands at 0.0256 with amplitude 1.002; the cost
+of dropping it entirely is about $5\times$ in median error, comparable to the
+seed spread. The likely reason — the sine IC already vanishes at the walls, so
+the IC term supplies the boundary values at $t=0$ and the residual carries them
+forward — is *interpretation*, not measurement: this problem has no
+inhomogeneous-BC variant here to test it against.
+
+**(4) The standard diagnosis does not hold on this problem.** Gradient-balancing
+schemes are motivated by the residual gradient dominating the constraint
+gradients (Wang, Teng & Perdikaris 2021). Measured at $w=1$,
+$\lVert\nabla_\theta L_r\rVert / \lVert\nabla_\theta L_{\text{ic}}\rVert$ stays
+in [0.10, 1.31] and is *below* 1 on 85% of the logged steps — the residual
+gradient is the smaller one for most of training.
+
+**(5) So the adaptive rule detonates, and (4) is why.** Learning-rate annealing
+sets $w_i \leftarrow 0.1\,w_i + 0.9\,\big(\max_\theta|\nabla_\theta L_r| \big/
+\operatorname{mean}_\theta|\nabla_\theta L_i|\big)$. That ratio is a max over
+parameters divided by a mean over parameters, so it carries a large factor from
+the *shape* of the gradient vectors on top of any scale difference: on this
+network at initialization the norm ratio is 0.50 while the rule's own statistic
+is 38.5, a $76\times$ inflation
+(`test_the_adaptive_ratio_is_inflated_by_its_own_shape`). With the premise in
+(4) false, nothing offsets it, and the loop feeds itself — a larger
+$w_{\text{ic}}$ fits the IC better, which shrinks the denominator, which raises
+$w_{\text{ic}}$ again.
+
+| | rel $L^2$ (median, [min, max]) | amplitude | final $w_{\text{ic}}$ |
+| --- | --- | ---: | ---: |
+| best fixed ($w=10$) | 0.0037 [0.0035, 0.0235] | 1.001 | 10 |
+| **adaptive** | **0.6567 [0.2092, 0.6999]** | 0.643 | $7.6\times10^{4}$ |
+
+The rule lands at $178\times$ the error of the fixed weight it was meant to
+replace, having chosen weights $7{,}580\times$ beyond the largest the sweep ever
+tried. The honest summary of this section is that on this problem the weights
+were never the difficulty they are advertised as: a fixed $w=1$ is fine, the
+boundary penalty is optional, and the only two things measured here that
+actually break the solve are an IC weight starved three decades below anything
+anyone would write, and the adaptive rule sold as the way to stop tuning them.
+
 ## Reproduce
 
 Every figure, from a clean clone, without training anything:
@@ -441,7 +535,7 @@ Every figure, from a clean clone, without training anything:
 python -m venv .venv && source .venv/bin/activate
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt && pip install -e .
-./reproduce.sh                  # tests, then all 12 figures: ~1 min
+./reproduce.sh                  # tests, then all 13 figures: ~1 min
 ```
 
 Training this repo end to end is about three hours of CPU, so the artifacts
@@ -462,7 +556,7 @@ committed rather than regenerated on demand.
 To actually retrain:
 
 ```bash
-pytest -q                       # 109 tests, ~1 min
+pytest -q                       # 118 tests, ~1 min
 cd experiments
 python heat.py                  # ~25 min (default solve + both sweeps)
 python burgers.py               # ~30 min (Cole-Hopf truth + PINN train)
@@ -472,6 +566,7 @@ python adaptive_collocation.py  # ~12 min (RAD/RAR: 3-arm collocation study)
 python crank_nicolson.py        # <1 s   (classical FD baseline vs the PINN)
 python hard_bc.py               # ~14 min (hard-constraint ansatz vs soft penalty)
 python inverse.py               # ~40 min (inverse problem: 3 sweeps, 14 solves)
+python loss_weighting.py        # ~50 min (loss weights: 5 measurements, 60 solves)
 ```
 
 Every script takes `--quick` for a fast smoke run, and `--figures` to skip
