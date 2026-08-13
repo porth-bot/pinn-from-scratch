@@ -97,14 +97,28 @@ def u_tt(u: torch.Tensor, coords: torch.Tensor) -> torch.Tensor:
     return _second(u, coords, T)
 
 
-def laplacian(u: torch.Tensor, coords: torch.Tensor) -> torch.Tensor:
-    """Sum of unmixed second derivatives over *all* input dimensions.
+def laplacian(u: torch.Tensor, coords: torch.Tensor, dims=None) -> torch.Tensor:
+    """Sum of unmixed second derivatives, sum_i u_{x_i x_i}.
 
-    For coords with d spatial columns this is sum_i u_{x_i x_i}. On the (x, t)
-    convention with a time column you usually want :func:`u_xx` instead; this
-    helper is for purely spatial problems (e.g. a 2D Poisson demo).
+    ``dims`` selects which input columns to sum over; the default (None) uses
+    all of them. On the ``[x_1 .. x_d, t]`` convention used by the
+    high-dimensional experiments the *spatial* Laplacian is
+    ``laplacian(u, coords, dims=range(d))`` -- summing over every column would
+    add a spurious u_tt.
+
+    Written to take d + 1 backward passes rather than 2d. The naive form
+    ``sum_i _second(u, coords, i)`` recomputes the whole first gradient inside
+    every ``_second`` call (see :func:`partial`), which costs a backward pass
+    per dimension for a quantity that does not depend on the dimension. Here
+    grad u is taken once and each column of it is differentiated again. At
+    d = 16 that is the difference between 32 and 17 passes, and the Laplacian
+    is the inner loop of every high-dimensional residual in this repo. The
+    values are unchanged -- ``tests/test_derivatives.py`` pins the two forms
+    against each other.
     """
+    idx = range(coords.shape[1]) if dims is None else dims
+    g = grad(u, coords)
     total = torch.zeros_like(u)
-    for d in range(coords.shape[1]):
-        total = total + _second(u, coords, d)
+    for d in idx:
+        total = total + partial(g[:, d : d + 1], coords, d)
     return total

@@ -110,6 +110,42 @@ def test_laplacian_sums_unmixed_second_derivatives():
     assert torch.allclose(lap, lap_true, atol=1e-5)
 
 
+def test_laplacian_dims_selects_a_subset_of_the_columns():
+    # On coords [x0, x1, x2] with u = sin(a x0) + sin(a x1) + sin(a x2), the
+    # Laplacian over dims (0, 1) must drop the x2 term entirely. This is the
+    # spatial-vs-time distinction the high-dimensional residual depends on:
+    # summing every column there would add a spurious u_tt.
+    gen = torch.Generator().manual_seed(2)
+    c = torch.rand(40, 3, generator=gen, dtype=DT)
+    c.requires_grad_(True)
+    u = sum(torch.sin(A * c[:, i : i + 1]) for i in range(3))
+
+    partial_lap = D.laplacian(u, c, dims=range(2))
+    expected = -(A ** 2) * (torch.sin(A * c[:, 0:1]) + torch.sin(A * c[:, 1:2]))
+    assert torch.allclose(partial_lap, expected, atol=1e-5)
+    # and it really is a subset: the full Laplacian differs by the x2 term
+    full = D.laplacian(u, c)
+    assert torch.allclose(full - partial_lap, -(A ** 2) * torch.sin(A * c[:, 2:3]),
+                          atol=1e-5)
+
+
+def test_laplacian_matches_the_naive_per_dimension_form():
+    # laplacian() shares one first-gradient pass across the dimensions rather
+    # than recomputing it inside each _second() call (d + 1 backward passes
+    # instead of 2d). That is an efficiency change only, so it has to return
+    # what the naive form returns -- on a field with cross terms, where a
+    # mistake in reusing the graph would show up.
+    gen = torch.Generator().manual_seed(3)
+    c = torch.rand(30, 4, generator=gen, dtype=DT)
+    c.requires_grad_(True)
+    u = torch.prod(torch.sin(A * c), dim=1, keepdim=True) + torch.sum(
+        c ** 3, dim=1, keepdim=True
+    )
+
+    naive = sum(D.partial(D.partial(u, c, i), c, i) for i in range(4))
+    assert torch.allclose(D.laplacian(u, c), naive, atol=1e-9, rtol=1e-9)
+
+
 def test_higher_order_graph_is_retained():
     # u_xx must itself be differentiable (create_graph=True): d/dx of u_xx
     # should equal u_xxx = -A^3 cos(A x) exp(-B t).
