@@ -101,6 +101,34 @@ not the density at which the physics is sampled. That is a statement about
 this problem, not about PINNs in general — a solution with fine structure
 would sample-starve at 2k points.
 
+**Every number above is a final iterate, and Adam has not settled.** The
+committed `logs/heat_training.csv` reads 3.43e-3, 2.41e-2, 4.83e-2, 3.62e-3 at
+steps 3500–5000, so even the headline 3.6e-3 is one sample of an oscillation
+with a 14× band. `python experiments/heat.py --tail` re-runs each width cell and
+evaluates it every 100 steps over the last 1000 (`logs/heat_tail.csv`). Every
+cell reproduces its table entry exactly, and every cell has a band:
+
+| width | 32 | 64 | 128 | 256 |
+|---|---|---|---|---|
+| reported (step 3000) | 2.33e-2 | 5.93e-3 | 4.20e-3 | 3.35e-3 |
+| min–max over steps 2000–3000 | 7.7e-3 – 2.3e-2 | 5.9e-3 – 6.9e-2 | 4.2e-3 – 7.0e-3 | 3.3e-3 – 7.6e-2 |
+| band | 3.0× | 11.7× | 1.7× | 22.8× |
+
+**All four bands overlap their neighbours, so the 7× monotone fall in width is
+not resolved by single final iterates.** The trend may well be real — three of
+the four cells report at or near their own band minimum, and the widest network
+reaches the lowest error seen anywhere — but this table does not establish it,
+and settling it needs seed averaging that has not been run here. What the
+measurement does settle is the *collocation* reading, in its favour: those
+differences (4.17e-3 → 4.23e-3) are far inside this band, which is exactly what
+"i.e. noise" claimed.
+
+This is one seed's tail, not a seed study. The high-dimensional work in
+`experiments/highd_heat.py` avoids the problem a different way — it returns the
+iterate with the lowest *training* loss, which is selection on the objective
+and uses no ground truth, so nothing about the exact solution leaks into the
+choice.
+
 <p align="center"><img src="figures/heat_error.png" width="820"></p>
 <p align="center"><img src="figures/heat_convergence.png" width="700"></p>
 
@@ -556,9 +584,12 @@ committed rather than regenerated on demand.
 To actually retrain:
 
 ```bash
-pytest -q                       # 118 tests, ~1 min
+pytest -q                       # 160 tests, ~1 min
 cd experiments
 python heat.py                  # ~25 min (default solve + both sweeps)
+python heat.py --tail           # ~8 min  (final-iterate spread of the width sweep)
+python highd_heat.py --verify   # ~3 min  (d=1 pin of the d-dimensional code)
+python highd_heat.py --metric   # ~2 min  (Monte Carlo metric precision vs d)
 python burgers.py               # ~30 min (Cole-Hopf truth + PINN train)
 python spectral_bias.py         # ~2 h   (12 PINN runs + regression + 3x controls)
 python optimizer_study.py       # ~2.5 min (Adam vs L-BFGS vs hybrid)

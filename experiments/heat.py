@@ -138,6 +138,7 @@ def train(
     seed=0,
     w_ic=1.0,
     w_bc=1.0,
+    eval_every=500,
     verbose=False,
 ):
     """Train a heat-equation PINN with Adam; return (model, history).
@@ -171,7 +172,7 @@ def train(
         loss.backward()
         opt.step()
 
-        if step % 500 == 0 or step == steps:
+        if step % eval_every == 0 or step == steps:
             err = rel_l2_error(model)
             history.append((step, float(loss.item()), err))
             if verbose:
@@ -246,6 +247,71 @@ def sweep_width(widths, n_interior, steps, seed=0):
     return rows
 
 
+# ---------------------------------------------------------------------------
+# Experiment 3: how much of a reported number is the choice of final iterate
+# ---------------------------------------------------------------------------
+def tail_study(widths=(32, 64, 128, 256), n_interior=4000, steps=3000,
+               tail_from=2000, eval_every=100, seed=0):
+    """The spread of the relative L2 over the tail of training, per width.
+
+    Every number in this section is the error at whichever step training
+    happened to stop on, and this measures what that choice is worth. Adam does
+    not settle on this objective: the committed ``logs/heat_training.csv`` reads
+    3.43e-3, 2.41e-2, 4.83e-2, 3.62e-3 at steps 3500-5000, so the default run's
+    headline is one sample of an oscillation with a 14x band.
+
+    That matters most for the width sweep, whose whole claim is a 7x monotone
+    fall from width 32 to 256 -- a range *smaller* than that band. If the tail
+    spread of each cell is comparable to the gaps between cells, the monotone
+    reading is not supported by single final iterates, and the honest thing is
+    to know which it is rather than to argue either way. Each cell is re-run at
+    its own settings and evaluated every ``eval_every`` steps over the last
+    ``steps - tail_from``, so the reported min/median/max are the same quantity
+    the table reports, sampled repeatedly.
+    """
+    rows = []
+    for w in widths:
+        t0 = time.time()
+        model, hist = train(n_interior=n_interior, width=w, steps=steps,
+                            seed=seed, eval_every=eval_every)
+        tail = [e for s, _, e in hist if s >= tail_from]
+        rows.append({
+            "width": w, "n_interior": n_interior, "steps": steps,
+            "tail_from": tail_from, "eval_every": eval_every,
+            "n_samples": len(tail),
+            "final": f"{hist[-1][2]:.6e}",
+            "min": f"{min(tail):.6e}",
+            "median": f"{float(np.median(tail)):.6e}",
+            "max": f"{max(tail):.6e}",
+            "band": f"{max(tail) / min(tail):.3f}",
+            "seconds": f"{time.time() - t0:.1f}",
+        })
+        print(f"width {w:4d}  final {hist[-1][2]:.3e}   tail "
+              f"[{min(tail):.3e}, {max(tail):.3e}]  band {max(tail)/min(tail):.1f}x "
+              f"over {len(tail)} samples  ({time.time() - t0:.0f}s)")
+    return rows
+
+
+def report_tail(rows):
+    print("\n" + "=" * 72)
+    print("Is the width trend larger than the final-iterate noise?")
+    print("=" * 72)
+    finals = [float(r["final"]) for r in rows]
+    print(f"  width sweep as reported (final iterates): "
+          f"{finals[0]:.2e} -> {finals[-1]:.2e}, {finals[0] / finals[-1]:.1f}x")
+    overlap = []
+    for a, b in zip(rows, rows[1:]):
+        lo_a, hi_a = float(a["min"]), float(a["max"])
+        lo_b, hi_b = float(b["min"]), float(b["max"])
+        if not (hi_b < lo_a or hi_a < lo_b):
+            overlap.append((a["width"], b["width"]))
+    print(f"  adjacent cells whose tail bands overlap: "
+          f"{overlap if overlap else 'none'}")
+    print("  -> the monotone reading is "
+          + ("NOT resolved by single final iterates" if overlap
+             else "supported: no adjacent pair overlaps"))
+
+
 def figure_convergence(coll_rows, width_rows):
     fig, axes = plt.subplots(1, 2, figsize=(9, 3.4))
     n = [int(r["n_interior"]) for r in coll_rows]
@@ -279,9 +345,18 @@ def figures_from_committed():
     figure_convergence(read_csv("heat_collocation.csv"), read_csv("heat_width.csv"))
 
 
-def main(quick=False, figures=False):
+def main(quick=False, figures=False, tail=False):
     if figures:
         figures_from_committed()
+        return
+
+    if tail:
+        rows = tail_study()
+        write_csv("heat_tail.csv",
+                  ["width", "n_interior", "steps", "tail_from", "eval_every",
+                   "n_samples", "final", "min", "median", "max", "band",
+                   "seconds"], rows)
+        report_tail(rows)
         return
 
     if quick:
@@ -338,5 +413,7 @@ if __name__ == "__main__":
     ap.add_argument("--quick", action="store_true")
     ap.add_argument("--figures", action="store_true",
                     help="replay the figures from committed artifacts, no training")
+    ap.add_argument("--tail", action="store_true",
+                    help="measure the final-iterate spread of the width sweep")
     args = ap.parse_args()
-    main(quick=args.quick, figures=args.figures)
+    main(quick=args.quick, figures=args.figures, tail=args.tail)
