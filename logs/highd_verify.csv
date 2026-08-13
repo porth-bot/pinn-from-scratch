@@ -1,0 +1,10 @@
+metric,value
+rel_l2_mc_bestloss,2.146750e-03
+rel_l2_mc_stderr,6.988687e-06
+rel_l2_grid_bestloss,2.293630e-03
+rel_l2_mc_final,1.995800e-02
+rel_l2_grid_final,2.024266e-02
+best_loss_step,4972
+best_loss,4.391206e-05
+final_loss,6.475000e-04
+seconds,81.7
