@@ -30,9 +30,10 @@ from crank_nicolson import _thomas, crank_nicolson  # noqa: E402
 from heat import ALPHA  # noqa: E402
 from highd_heat import HighDHeat, exact, exact_ms, sec1_terms  # noqa: E402
 from highd_mesh import (  # noqa: E402
-    ASPECT, THETA, fit_cost_model, flatness_study, grid_axis,
-    mode_amplification, mode_fields, node_steps, nt_for, order_study,
-    required_nx, second_difference, solve, thomas_factor, thomas_solve_axis,
+    ASPECT, THETA, extrapolate, fit_cost_model, flatness_study, grid_axis,
+    mode_amplification, mode_fields, model_seconds, node_steps, nt_for,
+    order_study, required_nx, second_difference, solve, thomas_factor,
+    thomas_solve_axis,
 )
 
 
@@ -454,14 +455,57 @@ def test_required_nx_declines_a_cell_it_cannot_fit():
     assert required_nx(HighDHeat(8), 1e-3, budget=10_000) is None
 
 
-def test_cost_model_divides_by_d():
-    """``tau`` is seconds per node-step per dimension. Constructed rows here so
-    the assertion is about the arithmetic, not about a timing."""
-    rows = [{"d": 2, "seconds": "1.0", "node_steps": "100"},
-            {"d": 4, "seconds": "2.0", "node_steps": "100"}]
+def test_cost_model_recovers_coefficients_it_was_built_from():
+    """Constructed rows with known ``c_py`` and ``tau``, so the assertion is
+    about the fit's arithmetic and not about any timing.
+
+    The two terms are only separable if the cells span dimensions where each in
+    turn dominates -- which is exactly the situation the cost sweep is in, and
+    the reason the fit is done over the whole sweep rather than the big cells.
+    """
+    c_py, tau = 3e-6, 7e-9
+    rows = []
+    for d, nx, nt in ((1, 22, 11), (3, 22, 11), (5, 20, 10), (6, 20, 10)):
+        n = nx - 1
+        rows.append({"d": d, "nx": nx, "nt": nt, "unknowns": n ** d,
+                     "seconds": f"{nt * d * (c_py * n + tau * n ** d):.12e}"})
     model = fit_cost_model(rows)
-    assert model["tau"] == pytest.approx(0.005)
-    assert model["spread"] == pytest.approx(1.0)
+    assert model["tau"] == pytest.approx(tau, rel=1e-6)
+    assert model["c_py"] == pytest.approx(c_py, rel=1e-6)
+    assert model["worst_rel"] < 1e-9
+    # The one-parameter quotient really does span orders over these cells --
+    # the fact that motivates the second term.
+    assert model["naive_spread"] > 100
+
+
+def test_cost_model_prediction_matches_its_own_coefficients():
+    model = dict(c_py=2e-6, tau=5e-9)
+    assert model_seconds(model, 3, 21, 10) == pytest.approx(
+        10 * 3 * (2e-6 * 20 + 5e-9 * 20 ** 3))
+
+
+def test_extrapolation_is_anchored_on_the_largest_measured_cell():
+    """The projection must reproduce its anchor exactly and scale by
+    ``d (N-1)^d`` from there -- the property a global fit does not have, and the
+    reason the projection does not use one.
+
+    Constructed rows, so this is a statement about the arithmetic and about
+    which cell is chosen, not about any timing.
+    """
+    rows = [
+        {"target": "1e-03", "d": 4, "nx": 20, "nt": 10, "unknowns": 19 ** 4,
+         "seconds": "0.05", "arrays": 5, "node_steps": f"{10*19.0**4:.6e}"},
+        {"target": "1e-03", "d": 6, "nx": 20, "nt": 10, "unknowns": 19 ** 6,
+         "seconds": "25.0", "arrays": 5, "node_steps": f"{10*19.0**6:.6e}"},
+    ]
+    projected, _ = extrapolate(rows, dims=(6, 8))
+    at6 = next(r for r in projected if r["d"] == 6)
+    at8 = next(r for r in projected if r["d"] == 8)
+    assert float(at6["seconds"]) == pytest.approx(25.0)          # exact at anchor
+    assert float(at8["seconds"]) == pytest.approx(25.0 * (8 / 6) * 19.0 ** 2)
+    assert float(at8["unknowns"]) == pytest.approx(19.0 ** 8)
+    assert float(at8["bytes_counted"]) == pytest.approx(5 * 8 * 19.0 ** 8)
+    assert "extrapolated" in at8["source"] and "d=6" in at8["source"]
 
 
 # ---------------------------------------------------------------------------

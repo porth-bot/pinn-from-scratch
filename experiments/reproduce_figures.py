@@ -7,7 +7,7 @@ them back into the figures:
 
     logs/*.csv                  -> heat_convergence, spectral_regression,
                                    spectral_pinn, optimizer_study,
-                                   crank_nicolson, inverse
+                                   crank_nicolson, inverse, highd_mesh
     logs + checkpoints/*.pt     -> spectral_fix, hard_bc
     checkpoints/*.pt            -> heat_error, burgers_error, burgers_slices,
                                    adaptive_collocation
@@ -35,6 +35,7 @@ import burgers
 import crank_nicolson
 import hard_bc
 import heat
+import highd_mesh
 import inverse
 import loss_weighting
 import optimizer_study
@@ -59,6 +60,7 @@ FIGURES = (
     "hard_bc.png",                # hard_bc, from CSV + the ansatz checkpoint
     "inverse.png",                # inverse, from the two sweep CSVs
     "loss_weighting.png",         # loss_weighting, from its two CSVs
+    "highd_mesh.png",             # highd_mesh, from its two cost CSVs
 )
 
 LOG_FILES = (
@@ -68,6 +70,8 @@ LOG_FILES = (
     "crank_nicolson.csv", "hard_bc.csv", "adaptive_collocation.csv",
     "inverse.csv", "inverse_trace.csv",
     "loss_weighting.csv", "loss_weighting_trace.csv",
+    "highd_mesh_cost.csv", "highd_mesh_extrapolated.csv",
+    "highd_mesh_order.csv", "highd_mesh_flat.csv", "highd_mesh_steps.csv",
 )
 
 CKPT_FILES = (
@@ -108,6 +112,8 @@ def main():
         ("inverse problem (alpha recovery)", inverse.figures_from_committed),
         ("loss weighting (residual vs IC/BC balance)",
          loss_weighting.figures_from_committed),
+        ("high-d mesh baseline (cost to fixed accuracy vs d)",
+         highd_mesh.figures_from_committed),
     ):
         print(f"\n>>> {label}")
         fn()

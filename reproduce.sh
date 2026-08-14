@@ -2,7 +2,7 @@
 #
 # Regenerate every figure in figures/ from the committed logs and checkpoints.
 #
-#     ./reproduce.sh              # tests, then all 13 figures: ~1 min
+#     ./reproduce.sh              # tests, then all 14 figures: ~1 min
 #     PYTHON=/path/to/python ./reproduce.sh
 #
 # NO TRAINING happens here, and that is the point. Training this repo end to
@@ -69,7 +69,7 @@ step() {  # step <label> <script> [args...]
 # artifact it reads is committed, and that every checkpoint still loads into the
 # model the experiment builds today -- the failures this script exists to catch.
 step "test suite" -m pytest -q
-step "regenerate all 13 figures from committed artifacts" experiments/reproduce_figures.py
+step "regenerate all 14 figures from committed artifacts" experiments/reproduce_figures.py
 
 echo
 echo "=================================================================="

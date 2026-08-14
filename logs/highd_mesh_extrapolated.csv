@@ -1,0 +1,11 @@
+target,d,nx,nt,unknowns,bytes_counted,seconds,source
+1e-02,7,6,3,7.812500e+04,3.125000e+06,2.289583e-02,extrapolated by d (N-1)^d from the measured d=6 cell (0.003925 s)
+1e-02,8,6,3,3.906250e+05,1.562500e+07,1.308333e-01,extrapolated by d (N-1)^d from the measured d=6 cell (0.003925 s)
+1e-02,10,6,3,9.765625e+06,3.906250e+08,4.088542e+00,extrapolated by d (N-1)^d from the measured d=6 cell (0.003925 s)
+1e-02,12,6,3,2.441406e+08,9.765625e+09,1.226562e+02,extrapolated by d (N-1)^d from the measured d=6 cell (0.003925 s)
+1e-02,16,6,3,1.525879e+11,6.103516e+12,1.022135e+05,extrapolated by d (N-1)^d from the measured d=6 cell (0.003925 s)
+1e-03,7,20,10,8.938717e+08,3.575487e+10,5.672413e+02,extrapolated by d (N-1)^d from the measured d=6 cell (25.59 s)
+1e-03,8,20,10,1.698356e+10,6.793425e+11,1.231724e+04,extrapolated by d (N-1)^d from the measured d=6 cell (25.59 s)
+1e-03,10,20,10,6.131066e+12,2.452427e+14,5.558154e+06,extrapolated by d (N-1)^d from the measured d=6 cell (25.59 s)
+1e-03,12,20,10,2.213315e+15,8.853260e+16,2.407792e+09,extrapolated by d (N-1)^d from the measured d=6 cell (25.59 s)
+1e-03,16,20,10,2.884414e+20,1.153766e+22,4.183812e+14,extrapolated by d (N-1)^d from the measured d=6 cell (25.59 s)

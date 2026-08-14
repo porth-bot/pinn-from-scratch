@@ -469,7 +469,7 @@ def step_study(cells=STEP_CELLS, nts=STEP_NT):
 TARGETS = (1e-2, 1e-3)
 SWEEP_DIMS = (1, 2, 3, 4, 5, 6)
 EXTRAPOLATE_DIMS = (7, 8, 10, 12, 16)
-UNKNOWN_BUDGET = 40_000_000     # ~1.6 GB at 5 arrays; what this machine will run
+UNKNOWN_BUDGET = 60_000_000     # ~2.4 GB at 5 arrays; what this machine will run
 
 
 def required_nx(problem, target, budget=UNKNOWN_BUDGET, verbose=False):
@@ -553,29 +553,79 @@ def cost_sweep(targets=TARGETS, dims=SWEEP_DIMS, budget=UNKNOWN_BUDGET,
 
 
 def fit_cost_model(rows):
-    """Seconds per node-step per dimension, and how far from constant it is.
+    """Fit ``seconds = nt d (c_py (N-1) + tau (N-1)^d)`` to the measured cells.
 
-    A step touches every node ``2d`` times for the second differences and ``d``
-    times for the tridiagonal sweeps, so the natural unit is ``tau`` in
-    ``seconds = tau * d * nt * (N-1)^d`` -- and dividing by d rather than
-    leaving it out is itself a claim, checked here by reporting the spread of
-    ``tau`` across the measured cells. A ``tau`` that drifts is reported as
-    drifting, not averaged away.
+    The obvious one-parameter model -- a constant ``tau`` in
+    ``seconds = tau d nt (N-1)^d`` -- does not survive contact with the
+    measurement: across the cells of the cost sweep that quotient spans a factor
+    of about 1900, and quoting its median would be quoting a number that fits
+    almost none of the data. The reason is visible in
+    :func:`thomas_solve_axis`: each line sweep is a Python loop over the ``N-1``
+    nodes of an axis, and each iteration does O((N-1)^(d-1)) of array work. At
+    d = 1 that array work is a single float, so a small cell measures the
+    interpreter, not the arithmetic.
+
+    So the model gets the second term it needs: ``c_py`` per axis-sweep node
+    (interpreter-bound, independent of d) and ``tau`` per node touched
+    (array-bound). Fitted with relative residuals, since the cells span five
+    orders of magnitude in wall clock and an unweighted least squares would be
+    a fit to the largest cell alone.
+
+    Returns ``tau``, ``c_py``, ``worst_rel`` (the largest |predicted/measured -
+    1| over the cells), ``worst_rel_array`` (the same over the cells where the
+    array term already dominates the interpreter one) and ``naive_spread``, the
+    one-parameter quotient's range -- reported rather than hidden, because it is
+    the reason the model has two terms.
+
+    This model is *evidence for the scaling law*, not the projection itself.
+    :func:`extrapolate` scales from the largest measured cell instead, which
+    reproduces that cell exactly; a global fit misses it by tens of percent,
+    since two coefficients cannot absorb the per-call numpy overheads that vary
+    across five orders of magnitude of array size.
     """
-    taus = [float(r["seconds"]) / (int(r["d"]) * float(r["node_steps"]))
-            for r in rows]
-    return dict(tau=float(np.median(taus)), tau_min=float(min(taus)),
-                tau_max=float(max(taus)), spread=float(max(taus) / min(taus)))
+    d = np.array([int(r["d"]) for r in rows], dtype=float)
+    n = np.array([int(r["nx"]) - 1 for r in rows], dtype=float)
+    nt = np.array([int(r["nt"]) for r in rows], dtype=float)
+    sec = np.array([float(r["seconds"]) for r in rows])
+    unknowns = np.array([float(r["unknowns"]) for r in rows])
+
+    A = np.stack([nt * d * n, nt * d * unknowns], axis=1) / sec[:, None]
+    coef, *_ = np.linalg.lstsq(A, np.ones_like(sec), rcond=None)
+    c_py, tau = float(coef[0]), float(coef[1])
+    pred = nt * d * (c_py * n + tau * unknowns)
+    naive = sec / (d * nt * unknowns)
+    array_dominated = tau * unknowns > c_py * n
+    return dict(tau=tau, c_py=c_py,
+                worst_rel=float(np.max(np.abs(pred / sec - 1.0))),
+                worst_rel_array=float(np.max(np.abs(
+                    (pred / sec - 1.0)[array_dominated]))),
+                n_array_dominated=int(array_dominated.sum()),
+                naive_spread=float(naive.max() / naive.min()))
+
+
+def model_seconds(model, d, nx, nt):
+    """Wall clock the fitted model predicts for a cell. Used by the projection."""
+    n = float(nx - 1)
+    return nt * d * (model["c_py"] * n + model["tau"] * n ** d)
 
 
 def extrapolate(rows, dims=EXTRAPOLATE_DIMS):
-    """Project the cost model to dimensions that will not run.
+    """Project to dimensions that will not run, by scaling the largest that did.
 
     **These rows are arithmetic, not measurements**, and the CSV column
-    ``source`` says so on every one of them. Two inputs, both measured
-    elsewhere: ``tau`` from :func:`fit_cost_model`, and N from the largest
-    measured d for that target -- the second resting on :func:`flatness_study`,
-    which is why that measurement exists.
+    ``source`` says so on every one of them.
+
+    The projection scales the largest measured cell for each target by the
+    scheme's own complexity -- ``d`` stages times ``(N-1)^d`` nodes, at fixed
+    ``nt`` -- rather than evaluating a fitted model. Both would be defensible;
+    this one is preferred because it is exact at the anchor, whereas the global
+    two-parameter fit of :func:`fit_cost_model` misses that same cell by tens of
+    percent. The fit is still computed and reported, as the evidence that the
+    law being scaled by is the law the measurements follow.
+
+    Two assumptions, both measured elsewhere rather than assumed here: that
+    seconds are proportional to ``d (N-1)^d`` (:func:`fit_cost_model`), and that
+    N need not grow with d to hold the accuracy (:func:`flatness_study`).
     """
     model = fit_cost_model(rows)
     out = []
@@ -585,16 +635,17 @@ def extrapolate(rows, dims=EXTRAPOLATE_DIMS):
     for target, cells in by_target.items():
         anchor = max(cells, key=lambda c: int(c["d"]))
         nx, nt = int(anchor["nx"]), int(anchor["nt"])
-        arrays = int(anchor["arrays"])
+        d0, arrays = int(anchor["d"]), int(anchor["arrays"])
+        sec0, unknowns0 = float(anchor["seconds"]), float(anchor["unknowns"])
         for d in dims:
             unknowns = float(nx - 1) ** d
             out.append({
                 "target": target, "d": d, "nx": nx, "nt": nt,
                 "unknowns": f"{unknowns:.6e}",
                 "bytes_counted": f"{arrays * 8 * unknowns:.6e}",
-                "seconds": f"{model['tau'] * d * nt * unknowns:.6e}",
-                "source": f"extrapolated (tau={model['tau']:.3e} s, "
-                          f"N from measured d={anchor['d']})",
+                "seconds": f"{sec0 * (d / d0) * (unknowns / unknowns0):.6e}",
+                "source": f"extrapolated by d (N-1)^d from the measured "
+                          f"d={d0} cell ({sec0:.4g} s)",
             })
     return out, model
 
@@ -625,8 +676,16 @@ def report(measured, projected, skipped, model):
     print("Mesh cost to a fixed relative L2: measured where it runs, "
           "extrapolated where it does not")
     print("=" * 84)
-    print(f"cost model tau = {model['tau']:.3e} s per node-step per dimension "
-          f"(spread {model['spread']:.2f}x over the measured cells)")
+    print(f"scaling law evidence: seconds = nt d (c_py (N-1) + tau (N-1)^d) "
+          f"with tau = {model['tau']:.3e} s/node, c_py = {model['c_py']:.3e} s")
+    print(f"  fits every measured cell to {model['worst_rel']*100:.0f}%, and "
+          f"the {model['n_array_dominated']} array-dominated cells to "
+          f"{model['worst_rel_array']*100:.0f}%")
+    print(f"  (a single constant seconds-per-node-step spans "
+          f"{model['naive_spread']:.0f}x over the same cells -- the small-d "
+          f"solves measure the interpreter, not the arithmetic)")
+    print("  the projection below scales the largest measured cell, not this "
+          "fit, so it is exact at its anchor")
     for target in sorted({r["target"] for r in measured}, reverse=True):
         print(f"\ntarget rel L2 = {target}")
         print(f"  {'d':>3} {'N':>5} {'nt':>4} {'unknowns':>13} {'rel L2':>11} "
