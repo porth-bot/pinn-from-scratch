@@ -555,6 +555,102 @@ boundary penalty is optional, and the only two things measured here that
 actually break the solve are an IC weight starved three decades below anything
 anyone would write, and the adaptive rule sold as the way to stop tuning them.
 
+### 10. The mesh in $d$ dimensions, and where it stops (`experiments/highd_mesh.py`)
+
+§6 measured the classical solver beating the PINN by a factor of $4\times10^5$
+in 1D. The one setting where that is supposed to reverse is high dimension,
+because the mesh's cost is exponential in $d$ and the network's is not. This
+section is the mesh half of that comparison, on the $d$-dimensional heat problem
+whose exact solution `experiments/highd_heat.py` set up — **run** as far as this
+machine allows, then extrapolated, with the boundary between the two marked on
+every number.
+
+**The scheme.** Crank-Nicolson does not lift: in $d$ dimensions the implicit
+operator is a Kronecker sum with bandwidth $N^{d-1}$, so a direct solve stops
+being linear in the unknowns. Douglas ADI splits it into $d$ one-dimensional
+stages, each $N^{d-1}$ independent tridiagonal systems, and keeps second order.
+At $d=1$ it *is* Crank-Nicolson algebraically, so it is pinned step by step
+against §6's shipped solver; above $d=1$ the oracle is a hand-derived scalar
+recursion for the amplitude of one grid sine mode, plus a dense assembly of the
+unsplit Kronecker sum at $d=2$. Measured convergence order is 2.00 at $d=1,2,3$.
+
+<p align="center"><img src="figures/highd_mesh.png" width="920"></p>
+
+Cost to reach a fixed relative $L^2$, with the grid found by prediction and then
+actually run (the error column is what the returned grid measured, not the
+target):
+
+| target | $d$ | $N$ | unknowns | rel $L^2$ | wall | memory | |
+|---|---|---|---|---|---|---|---|
+| $10^{-3}$ | 3 | 22 | 9,261 | 8.98e-4 | 10 ms | 362 KB | measured |
+| $10^{-3}$ | 4 | 20 | 130,321 | 9.80e-4 | 37 ms | 4.97 MB | measured |
+| $10^{-3}$ | 5 | 20 | 2,476,099 | 9.01e-4 | 0.75 s | 94.5 MB | measured |
+| $10^{-3}$ | 6 | 20 | 47,045,881 | 8.44e-4 | **25.6 s** | **1.75 GB** | measured |
+| $10^{-3}$ | 8 | 20 | $1.7\times10^{10}$ | — | 205 min | 633 GB | *extrapolated* |
+| $10^{-3}$ | 16 | 20 | $2.9\times10^{20}$ | — | $1.3\times10^{7}$ yr | 9.77 ZB | *extrapolated* |
+| $10^{-2}$ | 6 | 6 | 15,625 | 9.33e-3 | 3.9 ms | 610 KB | measured |
+| $10^{-2}$ | 16 | 6 | $1.5\times10^{11}$ | — | 28.4 h | 5.55 TB | *extrapolated* |
+
+**$d \geq 7$ is extrapolated, not run**, and the projection scales the largest
+*measured* cell by the scheme's own $d\,(N-1)^d$ complexity rather than
+evaluating a fitted model — so it reproduces its anchor exactly. The full model
+`seconds = nt·d·(c_py·(N-1) + tau·(N-1)^d)` is fitted and reported next to it as
+the evidence that this is the law the measurements follow.
+
+**Three things this measured that the cost formula does not tell you.**
+
+**The wall is set by the accuracy, not by $d$ alone.** At $10^{-2}$ the $d=16$
+mesh needs 5.55 TB and about a day — large, but not obviously impossible. Ask
+for one more digit and the same $d=16$ solve needs $9.8$ ZB and $10^7$ years.
+Tightening the target moves $N$ from 6 to 20, and $(20/6)^{16}$ is $3\times10^8$.
+In high dimension the curse is charged per digit.
+
+**Six dimensions ran.** The plan for this section was $d=1,2,3$ measured and
+everything above extrapolated. $d=6$ at $10^{-3}$ turned out to fit in 1.75 GB
+and 26 seconds, because only the current time level is stored (memory is
+independent of $n_t$, unlike §6's solver, which returns the whole space-time
+field). A measured point beats an extrapolated one, so the sweep goes to where
+the machine actually stops.
+
+**The accuracy a given grid reaches does not degrade with $d$** — which is the
+premise the whole extrapolation rests on, so it is measured rather than assumed.
+At a fixed $N=16$ the relative $L^2$ reads 1.61e-3, 1.90e-3, 1.70e-3, 1.53e-3,
+1.41e-3, 1.32e-3 for $d=1\ldots6$: a $1.2\times$ band that slightly *improves*
+with $d$. The reason is the $\alpha_d = \alpha_1/d$ scaling `highd_heat` chose
+for a different purpose — the leading truncation error sums $d$ per-axis terms
+and is multiplied by a diffusivity falling as $1/d$, so the two cancel.
+
+Two smaller measurements that changed how the numbers above were taken:
+
+- **The time step is not the binding cost, and the error is not monotone in it.**
+  At fixed $N$, refining $n_t$ cuts the error at second order, *undershoots* the
+  space-limited plateau, and comes back up to it: at $d=2$, $N=128$ the plateau
+  is 3.16e-5 and the minimum is 1.69e-5 at $n_t=16$. The two truncation errors
+  have opposite signs — the discrete Laplacian's eigenvalue underestimates
+  $\alpha k^2\pi^2$ so space decays too slowly, while $(1-z/2)/(1+z/2)$ falls
+  below $e^{-z}$ so time decays too fast — and at one $n_t$ they cancel. Tuning
+  $n_t$ to that minimum would be reporting a cancellation belonging to this
+  problem and this grid, so the operating point is $n_t = N/2$, taken from the
+  plateau. It still collects a residual credit, largest at $d=1$ ($0.70\times$
+  the plateau) and negligible by $d=4$ ($0.996\times$), and that is stated rather
+  than absorbed.
+- **A single "seconds per node-step" constant spans $1844\times$ across these
+  cells** and would have been a fiction. Each line sweep is a Python loop over
+  the $N-1$ nodes of an axis doing $O((N-1)^{d-1})$ of array work per iteration,
+  so a small-$d$ solve measures the interpreter rather than the arithmetic. The
+  two-term model above fits every cell to 59% and the four array-dominated cells
+  to 26%; the projection sidesteps the question by anchoring on a measurement.
+
+Memory here is *counted in the source* (five $(N-1)^d$ float64 arrays, asserted
+in the tests) and not read off a process meter, with `tracemalloc` reported
+beside it as a check. That follows `gp-from-scratch`, whose Day 7 found peak RSS
+spreading 42% across five runs on one idle machine while every requested-bytes
+figure was bit-identical.
+
+What is **not** here yet is the other half: the PINN's cost across the same
+dimensions, on the same problem, at the same accuracy. Without it this section
+is one curve, not a comparison.
+
 ## Reproduce
 
 Every figure, from a clean clone, without training anything:
@@ -563,7 +659,7 @@ Every figure, from a clean clone, without training anything:
 python -m venv .venv && source .venv/bin/activate
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt && pip install -e .
-./reproduce.sh                  # tests, then all 13 figures: ~1 min
+./reproduce.sh                  # tests, then all 14 figures: ~1 min
 ```
 
 Training this repo end to end is about three hours of CPU, so the artifacts
@@ -584,7 +680,7 @@ committed rather than regenerated on demand.
 To actually retrain:
 
 ```bash
-pytest -q                       # 160 tests, ~1 min
+pytest -q                       # 196 tests, ~1 min
 cd experiments
 python heat.py                  # ~25 min (default solve + both sweeps)
 python heat.py --tail           # ~8 min  (final-iterate spread of the width sweep)
@@ -595,6 +691,9 @@ python spectral_bias.py         # ~2 h   (12 PINN runs + regression + 3x control
 python optimizer_study.py       # ~2.5 min (Adam vs L-BFGS vs hybrid)
 python adaptive_collocation.py  # ~12 min (RAD/RAR: 3-arm collocation study)
 python crank_nicolson.py        # <1 s   (classical FD baseline vs the PINN)
+python highd_mesh.py --order    # ~6 s   (ADI convergence order; error vs d at fixed N)
+python highd_mesh.py --steps    # ~9 s   (how many time steps a grid actually needs)
+python highd_mesh.py --sweep    # ~85 s  (cost to fixed accuracy vs d, through d=6)
 python hard_bc.py               # ~14 min (hard-constraint ansatz vs soft penalty)
 python inverse.py               # ~40 min (inverse problem: 3 sweeps, 14 solves)
 python loss_weighting.py        # ~50 min (loss weights: 5 measurements, 60 solves)
@@ -643,17 +742,22 @@ so the reproduction path cannot quietly rot.
   accuracy, and convergence *guarantees* (the PINN offers a nonconvex loss and
   no error order). **This repo is a study of the method's mechanics and
   failure modes, not an argument that PINNs should solve these PDEs.**
-- **Where PINNs actually earn their place**: the inverse problem is now
-  measured in §8 — a coefficient recovered from 200 noisy point samples by
-  adding one data term and one `nn.Parameter`, with no boundary data and no
-  adjoint solver to hand-derive. The other two claims in this family, **high
-  dimension** (no mesh to explode) and **irregular geometry**, are still not
-  demonstrated here.
-- **1D + time only.** No 2D spatial problems. (L-BFGS, the classic PINN
-  optimizer, is now studied in §4, residual-adaptive collocation in §5, and hard
-  boundary-condition enforcement in §7 — all three were on this list and have
-  been ticked off; a 2D spatial problem has not. Soft penalties remain the
-  default because the hard ansatz must be hand-derived per problem, §7.)
+- **Where PINNs actually earn their place**: the inverse problem is measured in
+  §8 — a coefficient recovered from 200 noisy point samples by adding one data
+  term and one `nn.Parameter`, with no boundary data and no adjoint solver to
+  hand-derive. **High dimension is half-measured.** §10 has the mesh side: the
+  $d$-dimensional problem, an ADI solver run out to $d=6$, and the wall it hits
+  above that. The PINN side — the same problem, the same accuracy, the same
+  axes — is *not run yet*, so §10 is one curve and not a comparison, and nothing
+  in this repo yet shows a PINN winning anywhere. **Irregular geometry** remains
+  undemonstrated entirely.
+- **The PINN results are 1D + time.** The *problem* is now $d$-dimensional
+  (`highd_heat.py`, with a closed-form solution at every $d$) and the *mesh
+  baseline* has been run to $d=6$ (§10), but every trained network reported here
+  still solves a one-dimensional problem. (L-BFGS is studied in §4,
+  residual-adaptive collocation in §5, and hard boundary conditions in §7 — all
+  three were on this list. Soft penalties remain the default because the hard
+  ansatz must be hand-derived per problem, §7.)
 
 ## References
 
