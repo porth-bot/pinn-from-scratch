@@ -8,7 +8,7 @@ them back into the figures:
     logs/*.csv                  -> heat_convergence, spectral_regression,
                                    spectral_pinn, optimizer_study,
                                    crank_nicolson, inverse, highd_mesh,
-                                   highd_pinn
+                                   highd_pinn, highd_crossover
     logs + checkpoints/*.pt     -> spectral_fix, hard_bc
     checkpoints/*.pt            -> heat_error, burgers_error, burgers_slices,
                                    adaptive_collocation
@@ -36,6 +36,7 @@ import burgers
 import crank_nicolson
 import hard_bc
 import heat
+import highd_crossover
 import highd_mesh
 import highd_pinn
 import inverse
@@ -64,6 +65,7 @@ FIGURES = (
     "loss_weighting.png",         # loss_weighting, from its two CSVs
     "highd_mesh.png",             # highd_mesh, from its two cost CSVs
     "highd_pinn.png",             # highd_pinn, from the sweep/trace/cost CSVs
+    "highd_crossover.png",        # highd_crossover, from its mesh/pinn/probe CSVs
 )
 
 LOG_FILES = (
@@ -76,6 +78,9 @@ LOG_FILES = (
     "highd_mesh_cost.csv", "highd_mesh_extrapolated.csv",
     "highd_mesh_order.csv", "highd_mesh_flat.csv", "highd_mesh_steps.csv",
     "highd_pinn_sweep.csv", "highd_pinn_trace.csv", "highd_pinn_cost.csv",
+    "highd_crossover_mesh.csv", "highd_crossover_pinn.csv",
+    "highd_crossover_probe.csv", "highd_crossover_probe_trace.csv",
+    "highd_crossover_summary.csv",
 )
 
 CKPT_FILES = (
@@ -120,6 +125,8 @@ def main():
          highd_mesh.figures_from_committed),
         ("high-d PINN sweep (error and cost vs d)",
          highd_pinn.figures_from_committed),
+        ("high-d crossover (mesh vs PINN at equal accuracy)",
+         highd_crossover.figures_from_committed),
     ):
         print(f"\n>>> {label}")
         fn()
