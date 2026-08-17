@@ -455,6 +455,59 @@ def test_required_nx_declines_a_cell_it_cannot_fit():
     assert required_nx(HighDHeat(8), 1e-3, budget=10_000) is None
 
 
+def test_required_nx_never_solves_a_grid_the_budget_forbids(monkeypatch):
+    """The budget has to bind on the *fit* sweep too, and it did not.
+
+    ``fit_sizes`` filters (4, 8, 16, 32) by the budget and, when fewer than two
+    survive, used to fall back to an unconditional ``[4, 6]``. Above about
+    d = 13 that is exactly the case that arises, and 5^16 is 1.5e11 unknowns --
+    1.2 TB, which does not come back as a tidy error. Found by Sec. 12, whose
+    loose target runs this solver to d = 16.
+
+    Asserted here as a property rather than as one repaired case: every solve
+    this function performs, for any reason, is inside the budget it was given.
+    """
+    import highd_mesh
+
+    seen = []
+    budget = [600_000]           # admits N = 4 at d = 12, nothing above it
+    real_solve = highd_mesh.solve
+
+    def spy(problem, nx, *a, **kw):
+        seen.append((problem.d, nx))
+        assert (nx - 1) ** problem.d <= budget[0], \
+            f"solved N={nx} at d={problem.d}: {(nx-1)**problem.d} unknowns"
+        return real_solve(problem, nx, *a, **kw)
+
+    monkeypatch.setattr(highd_mesh, "solve", spy)
+    required_nx(HighDHeat(12), 1e-1, budget=budget[0])
+    assert seen, "nothing was solved at all"
+    assert all(nx == 4 for _, nx in seen)
+
+    # And when even the smallest grid is over budget: a skipped cell and no
+    # solve at all -- not a smaller solve, and not a crash.
+    seen.clear()
+    budget[0] = 60_000
+    assert required_nx(HighDHeat(12), 1e-1, budget=budget[0]) is None
+    assert seen == []
+
+
+def test_required_nx_without_a_fittable_rate_still_finds_the_grid():
+    """No pair of sizes fits, so no rate is fitted -- and the search still works.
+
+    The prediction only ever made the search quick, never correct: every
+    candidate grid is solved and scored before it is accepted. ``fitted_order``
+    comes back NaN, which is the honest record of "no rate was fitted here" and
+    is what the CSV shows for those cells.
+    """
+    r = required_nx(HighDHeat(12), 1e-1, budget=600_000)
+    assert r is not None
+    assert np.isnan(r["fitted_order"])
+    assert r["nx"] == 4
+    assert r["rel_l2"] <= 1e-1
+    assert r["unknowns"] <= 600_000
+
+
 def test_cost_model_recovers_coefficients_it_was_built_from():
     """Constructed rows with known ``c_py`` and ``tau``, so the assertion is
     about the fit's arithmetic and not about any timing.

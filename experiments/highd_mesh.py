@@ -484,16 +484,31 @@ def required_nx(problem, target, budget=UNKNOWN_BUDGET, verbose=False):
 
     Returns ``None`` if reaching the target needs more than ``budget`` unknowns
     -- recorded as a skipped cell rather than dropped.
+
+    **The prediction is optional and the budget applies to it too.** Above about
+    d = 13 only the very smallest grid fits, so there is no pair of sizes to fit
+    a rate to. The fallback used to be an unconditional two-point sweep at
+    N = 4 and 6, which at d = 16 asks for 5^16 = 1.5e11 unknowns -- 1.2 TB, and
+    the process dies where it should have reported a skipped cell. It is
+    budget-filtered now, and when nothing can be fitted the search simply starts
+    at the smallest grid: the prediction only ever made the search quick, never
+    correct, since every candidate is run and scored before it is accepted.
+    ``fitted_order`` is NaN on those cells, which the CSV shows.
     """
     fit_sizes = [nx for nx in (4, 8, 16, 32) if (nx - 1) ** problem.d <= budget]
     if len(fit_sizes) < 2:
-        fit_sizes = [4, 6]
-    errs = [solve(problem, nx)["rel_l2"] for nx in fit_sizes]
-    slope, intercept = np.polyfit(np.log(np.array(fit_sizes, float)),
-                                  np.log(errs), 1)
-    p, C = -slope, np.exp(intercept)
-    guess = int(np.ceil((C / target) ** (1.0 / p)))
-    nx = max(4, guess + guess % 2)
+        fit_sizes = [nx for nx in (4, 6) if (nx - 1) ** problem.d <= budget]
+
+    if len(fit_sizes) >= 2:
+        errs = [solve(problem, nx)["rel_l2"] for nx in fit_sizes]
+        slope, intercept = np.polyfit(np.log(np.array(fit_sizes, float)),
+                                      np.log(errs), 1)
+        p, C = -slope, np.exp(intercept)
+        guess = int(np.ceil((C / target) ** (1.0 / p)))
+        nx = max(4, guess + guess % 2)
+    else:
+        p, guess = float("nan"), 0
+        nx = 4
 
     for _ in range(12):
         if (nx - 1) ** problem.d > budget:
