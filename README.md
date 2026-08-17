@@ -737,8 +737,89 @@ Two things this section is **not**. It is not a claim about what a PINN can do
 at $d=16$ with a budget chosen for $d=16$: this is one budget, held fixed on
 purpose so the sweep measures $d$ and not a tuner, and finding the budget each
 $d$ needs is a different experiment. And it is not yet the comparison §10 asked
-for — that needs cost to a *fixed accuracy* on both sides, which is the next
-thing here.
+for — that needs cost to a *fixed accuracy* on both sides, which is §12.
+
+### 12. The crossover, at equal accuracy (`experiments/highd_crossover.py`)
+
+§10 measured the mesh's cost in $d$ and §11 measured the PINN's accuracy in $d$,
+and neither is a comparison. A wall-clock number means nothing beside another
+one unless both methods reached the same accuracy — and they do not, so the only
+fair axis is **cost to reach a fixed relative $L^2$**, with the accuracy each
+method actually hit reported next to the time it took.
+
+Three targets rather than one, because the crossover dimension is not a property
+of the two methods; it is a property of the two methods *and the accuracy asked
+of them*. §10 already found why: refining the mesh moves $N$, the cost moves as
+$N^d$, and one more digit is a factor $(N'/N)^d$. A single target would hide
+that.
+
+<p align="center"><img src="figures/highd_crossover.png" width="1000"></p>
+
+**The loose target settles it, because there the mesh is measured all the way.**
+At $10^{-1}$ the grid that reaches the target is $N=4$, so a solve is $3^d$
+unknowns — and $3^{16}$ is 43 million, which fits in 1.7 GB. So the mesh side of
+this row is *measured at every $d$ out to 16*, with no extrapolation anywhere:
+
+| $d$ | 1 | 2 | 4 | 8 | 12 | 16 |
+|---|---|---|---|---|---|---|
+| mesh, s | 0.00015 | 0.00032 | 0.00076 | 0.0024 | 0.156 | **30.7** |
+| mesh rel $L^2$ | 2.9e-2 | 3.1e-2 | 2.4e-2 | 1.9e-2 | 1.7e-2 | 1.6e-2 |
+| PINN, s | 7.1 | 12.1 | **146** | never | — | never |
+| PINN best rel $L^2$ | 8.4e-4 | 4.0e-3 | 4.0e-2 | 7.1e-1 | — | 1.04 |
+
+At $d=4$ — the last dimension where the network reaches $10^{-1}$ at all — it
+costs 146 s against the mesh's 0.00076 s **at the same $d$ and the same
+accuracy**, a factor of $1.9\times10^{5}$, in the setting chosen to favour it.
+
+**Where the two curves would meet, and where the PINN stops first.** The PINN's
+cost is extrapolated on the most generous assumption available: that it needs no
+more optimizer *steps* at high $d$ than the most it needed at any $d$ where it
+worked, at the measured $13.4 + 13.1d$ ms/step. Both halves are generous — the
+step count it actually needed grows $250 \to 1833$ over the range where it works
+— so the crossing below is a **lower bound**, and
+`tests/test_highd_crossover.py` checks that direction rather than asserting it
+(a cheaper assumed PINN can only move the crossing earlier).
+
+| target | mesh becomes dearer from | PINN last reached it at | headroom |
+|---|---|---|---|
+| $10^{-1}$ | $d \geq 19$ | $d = 4$ | **15 dimensions** |
+| $10^{-2}$ | $d \geq 13$ | $d = 2$ | 11 |
+| $10^{-3}$ | $d \geq 7$ | $d = 1$ | 6 |
+
+**The crossover is real and it moves in as the target tightens** — 19, 13, 7 —
+which is §10's "charged per digit" seen from the other side. But the PINN's
+terminus moves in *faster* (4, 2, 1), so the gap never closes. **At no target
+tested does the crossover happen anywhere the network can still deliver the
+accuracy.** That is the week's thesis losing on its own chosen ground, and it is
+the answer to the question §10 and §11 were both pointing at.
+
+**A larger budget does not rescue the cell that would matter most.** "It did not
+get there in 5000 steps" is a statement about a budget, so $d=4$ was re-run at
+4× — 20,000 steps, 1531 s. It got from 4.18e-2 to 1.98e-2 and stopped: still
+2.0× short of $10^{-2}$. No budget-to-target is quoted from it, and the reason
+is worth more than the number would have been. Fitting $\text{err}\sim
+\text{steps}^{-p}$ over four windows gives $p = -0.46, -0.35, -1.05, -0.53$ —
+the trailing half of the trajectory spans 7.2×, so $p$ is not identified and any
+extrapolation would be reporting the window rather than the method.
+`probe_trend` prints all four windows for exactly that reason, with a clean
+power law as its control.
+
+**Two things cut against the mesh here, and both are stated rather than
+absorbed.** Its grid is an even integer, so it *overshoots*: at $10^{-1}$ it
+lands between 1.6e-2 and 3.1e-2, i.e. it is being charged for 2–6× more accuracy
+than was asked. And these cells were re-measured in one sitting on a busier
+machine than §10's — the 12 shared cells reproduce their grid and their relative
+$L^2$ **identically, to the last digit**, while the wall clock runs 1.00–1.63×
+higher (median 1.22×). Both push the same way: the mesh's seconds above are if
+anything inflated relative to the PINN's, which is the conservative direction
+for the conclusion.
+
+**Not run, and so not claimed**: the $d=8$ probe at $10^{-1}$ and a second seed
+at $d=4$. Both were started and starved by external load on this machine (93
+CPU-seconds in 25 wall-minutes), so the $d=8$ terminus in the table rests on the
+5000-step budget alone, and the $d=4$ probe is one seed against a measured 1.23×
+seed spread. `probe_sweep` resumes from committed cells, so finishing them costs
+only their own runtime.
 
 ## Reproduce
 
@@ -835,15 +916,20 @@ so the reproduction path cannot quietly rot.
 - **Where PINNs actually earn their place**: the inverse problem is measured in
   §8 — a coefficient recovered from 200 noisy point samples by adding one data
   term and one `nn.Parameter`, with no boundary data and no adjoint solver to
-  hand-derive. **High dimension is now measured on both sides, and it does not
-  favour the PINN.** §10 runs an ADI mesh out to $d=6$ and shows the wall above
-  it; §11 runs the network at $d = 1, 2, 4, 8, 16$ at one fixed budget and finds
-  the relative $L^2$ rising 1270× over that range, past 1.0 — the score of a
-  network that outputs zero — by $d=16$. Cost per step is linear in $d$ as
-  promised; accuracy is what fails, so nothing in this repo yet shows a PINN
-  winning anywhere. What is still missing is the comparison at *equal
-  accuracy*, which is what would settle whether a crossover exists at all.
-  **Irregular geometry** remains undemonstrated entirely.
+  hand-derive. **High dimension is now measured on both sides at equal accuracy,
+  and it does not favour the PINN.** §10 runs an ADI mesh out to $d=6$ at
+  $10^{-3}$ and shows the wall above it; §11 runs the network at
+  $d = 1, 2, 4, 8, 16$ at one fixed budget and finds the relative $L^2$ rising
+  1270× over that range, past 1.0 — the score of a network that outputs zero —
+  by $d=16$; §12 puts the two on one axis. The crossover **does** exist and its
+  dimension is computable ($d \geq 19$, 13, 7 as the target tightens through
+  $10^{-1}$, $10^{-2}$, $10^{-3}$), but the PINN stops reaching those targets at
+  $d = 4$, 2 and 1 — so it fails 6 to 15 dimensions before its own cost
+  advantage would have arrived. Cost per step is linear in $d$ as promised;
+  accuracy is what fails, so **nothing in this repo shows a PINN winning
+  anywhere.** **Irregular geometry** remains undemonstrated entirely, and is now
+  the strongest remaining candidate for a setting where the mesh's cost is the
+  binding constraint rather than the network's accuracy.
 - **Every PINN result except §11 is 1D + time**, and §11 is one budget rather
   than a search: the same architecture, step count and collocation count run at
   every $d$, on purpose, so that the sweep measures dimension and not a tuner.
@@ -851,7 +937,12 @@ so the reproduction path cannot quietly rot.
   importance-sampled ones, a wider net, longer training — recovers the accuracy
   is not tested here, and §11's own last-quarter numbers ($d=8$: loss still
   falling 2.0×, error flat at 0.94×) say the answer is not simply "train
-  longer". (L-BFGS is studied in §4,
+  longer". §12 tested the nearest version of "train longer" that could be
+  afforded — $d=4$ at 4× the steps — and it moved the error 2.1× while leaving
+  the cell 2.0× short, so the budget question is narrowed but not closed. What a
+  *differently shaped* budget buys (importance-sampled collocation above all,
+  since this repo's own metric study says the top 1% of uniform points carry 89%
+  of the norm at $d=16$) is still untested. (L-BFGS is studied in §4,
   residual-adaptive collocation in §5, and hard boundary conditions in §7 — all
   three were on this list. Soft penalties remain the default because the hard
   ansatz must be hand-derived per problem, §7.)
