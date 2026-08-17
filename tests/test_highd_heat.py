@@ -454,7 +454,13 @@ def test_loss_selection_returns_the_lowest_loss_iterate_not_the_last():
               eval_n=5_000)
     final, _, best = H.train(p, select="final", **kw)
     chosen, _, best2 = H.train(p, select="best_loss", **kw)
-    assert best == best2
+    # Compare the *deterministic* bookkeeping, key by key. ``best`` also carries
+    # ``train_seconds`` (a clock, so never equal twice) and ``state_dict`` (a
+    # tensor dict, whose == is elementwise), and a blanket ``best == best2``
+    # asserts on both by accident -- it passes only while the final iterate
+    # happens to win and the state dict is None.
+    for key in ("step", "loss", "final_loss"):
+        assert best[key] == best2[key], key
 
     def training_loss(model):
         gen = torch.Generator().manual_seed(2)

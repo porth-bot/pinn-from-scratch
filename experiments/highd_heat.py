@@ -468,10 +468,18 @@ def train(
     boundary points across all 2d faces (see :func:`boundary_points`), not a
     per-face count, so the boundary budget does not grow with d.
 
-    History rows are ``(step, loss, loss_r, loss_ic, loss_bc, rel_l2, se)``.
+    History rows are
+    ``(step, loss, loss_r, loss_ic, loss_bc, rel_l2, se, train_seconds)``.
     The error is a Monte Carlo estimate on ``eval_n`` points and carries its own
     standard error; ``eval_n`` is smaller than the default in :func:`rel_l2_mc`
     because this runs inside the training loop.
+
+    ``train_seconds`` is cumulative wall clock spent on the optimization only --
+    the evaluation calls, which exist for the log and not for the method, are
+    excluded from it. That column is what makes a run's *cost to reach an
+    accuracy* readable off the history, which is the comparison Sec. 11 needs;
+    including the instrumentation in it would charge the PINN for measurements
+    a user of the method would never take.
 
     **Which iterate is returned, and why it is not the last one.** Adam on this
     objective does not settle -- it spikes late in training and recovers. Sec.
@@ -509,7 +517,9 @@ def train(
     history = []
     best = dict(step=-1, loss=float("inf"))
     best_state = None
+    train_seconds = 0.0
     for step in range(steps + 1):
+        t_step = time.perf_counter()
         opt.zero_grad()
         r = residual(problem, model(interior), interior)
         loss_r = torch.mean(r ** 2)
@@ -530,11 +540,13 @@ def train(
             best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
 
         opt.step()
+        train_seconds += time.perf_counter() - t_step
 
         if step % eval_every == 0 or step == steps:
             err, se = rel_l2_mc(model, problem, n=eval_n, seed=12345)
             history.append((step, value, float(loss_r.item()),
-                            float(loss_ic.item()), float(loss_bc.item()), err, se))
+                            float(loss_ic.item()), float(loss_bc.item()), err, se,
+                            train_seconds))
             if verbose:
                 print(f"  step {step:5d}  loss {value:.3e}  "
                       f"(r {loss_r.item():.2e} ic {loss_ic.item():.2e} "
@@ -551,6 +563,13 @@ def train(
         best = dict(step=steps + 1, loss=final_loss)
         best_state = None            # the final weights are already in the model
     best["final_loss"] = final_loss
+    best["train_seconds"] = train_seconds
+
+    # The selected parameters travel with the summary, so a caller that wants
+    # *both* iterates scored -- Sec. 11's sweep does, since the gap between them
+    # is one of its measurements -- does not have to train the same run twice.
+    # ``None`` means the final iterate won and is already in the model.
+    best["state_dict"] = best_state
 
     if select == "best_loss" and best_state is not None:
         model.load_state_dict(best_state)
@@ -709,11 +728,13 @@ def main(quick=False, verify=False, metric=False):
                    {"metric": "final_loss", "value": f"{res['final_loss']:.6e}"},
                    {"metric": "seconds", "value": f"{res['seconds']:.1f}"}])
         write_csv("highd_verify_trace.csv",
-                  ["step", "loss", "loss_r", "loss_ic", "loss_bc", "rel_l2", "stderr"],
+                  ["step", "loss", "loss_r", "loss_ic", "loss_bc", "rel_l2", "stderr",
+                   "train_seconds"],
                   [{"step": s, "loss": f"{l:.6e}", "loss_r": f"{lr_:.6e}",
                     "loss_ic": f"{li:.6e}", "loss_bc": f"{lb:.6e}",
-                    "rel_l2": f"{e:.6e}", "stderr": f"{se:.6e}"}
-                   for s, l, lr_, li, lb, e, se in res["history"]])
+                    "rel_l2": f"{e:.6e}", "stderr": f"{se:.6e}",
+                    "train_seconds": f"{ts:.4f}"}
+                   for s, l, lr_, li, lb, e, se, ts in res["history"]])
         return
 
     if metric:
