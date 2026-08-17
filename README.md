@@ -647,9 +647,98 @@ beside it as a check. That follows `gp-from-scratch`, whose Day 7 found peak RSS
 spreading 42% across five runs on one idle machine while every requested-bytes
 figure was bit-identical.
 
-What is **not** here yet is the other half: the PINN's cost across the same
-dimensions, on the same problem, at the same accuracy. Without it this section
-is one curve, not a comparison.
+The other half — the PINN on the same problem across the same dimensions — is
+§11. It does not go the way this section's framing anticipates: at a fixed
+budget the network's accuracy collapses with $d$ well before the mesh's cost
+does, so the two curves still have to be put on one axis at *equal accuracy*
+before anything can be called a crossover.
+
+### 11. The PINN in $d$ dimensions, at one fixed budget (`experiments/highd_pinn.py`)
+
+§10 measured the mesh side and left the comparison one-sided. This is the other
+half: the same $d$-dimensional heat problem, the same closed-form solution, one
+architecture and one budget at every $d$ — width 128, depth 4, Adam at 1e-3 for
+5000 steps, 4000 interior and 400+400 boundary/initial collocation points,
+nothing tuned per dimension. Three seeds per cell, because a single seed does
+not survive this repo's own evidence (§9 found a 6.8× seed spread on this
+problem class; §1's committed history oscillates 14× over its last 1500 steps).
+
+**The cost side is exactly as advertised. The accuracy side is not.**
+
+| $d$ | params | mean rel $L^2$ | sd (3 seeds) | max/min | MC error | ms/step (median of 3) |
+|---|---|---|---|---|---|---|
+| 1 | 50,049 | **8.18e-4** | 2.1e-4 | 1.68× | 0.19% | 27.2 |
+| 2 | 50,177 | 3.93e-3 | 5.2e-5 | 1.03× | 0.21% | 40.2 |
+| 4 | 50,433 | 3.86e-2 | 4.1e-3 | 1.23× | 0.13% | 65.8 |
+| 8 | 50,945 | 7.64e-1 | 2.7e-2 | 1.07× | 0.19% | 115.8 |
+| 16 | 51,969 | **1.041** | 2.9e-2 | 1.06× | 1.12% | 223.8 |
+
+<p align="center"><img src="figures/highd_pinn.png" width="1000"></p>
+
+**A network that outputs zero everywhere scores exactly 1.0** — that is what
+normalizing by $\|u\|_{L^2}$ means, and `tests/test_highd_heat.py` asserts it.
+So at $d=16$ this budget is *worse than saying nothing*, and at $d=8$ it is only
+24% better. The error rises 1270× from $d=1$ to $d=16$ while the cost per step
+rises 8.2×. Whatever the high-dimensional argument for PINNs is, **this
+measurement does not support it**, and it is the direction §10's framing
+anticipated would reverse.
+
+The seed spread is not the explanation: at every $d$ the spread across seeds is
+1.03–1.68× against effects of 5–20× per doubling in $d$, and the Monte Carlo
+error in the metric itself is 0.2% everywhere except $d=16$, where it is 1.1%.
+Both are reported per cell in `logs/highd_pinn_sweep.csv`.
+
+**The training loss does not see any of this, and normalizing it is what shows
+why.** The raw losses are not comparable across $d$ — the solution's rms falls
+like $2^{-d/2}$, from 0.591 at $d=1$ to 0.00346 at $d=16$, so a small absolute
+loss at high $d$ is cheap. Divided by the target's own energy (`loss_scales`
+derives the two, and the table is printed by `highd_pinn.report`):
+
+| $d$ | 1 | 2 | 4 | 8 | 16 |
+|---|---|---|---|---|---|
+| relative IC error | 0.0026 | 0.0123 | 0.0424 | 0.262 | **1.131** |
+| relative residual | 0.0091 | 0.0208 | 0.0875 | 0.368 | 0.334 |
+
+At $d=16$ the initial condition is fit *worse than by zero* while the raw
+`loss_ic` reads 2.4e-5, the second-smallest number in the whole sweep. The
+absolute training loss at $d=16$ (2.6e-5) is lower than at $d=2$, $4$ and $8$;
+read without the normalization it says the run went well.
+
+**And the optimizer is not simply out of budget at $d=8$.** Over the last
+quarter of training the loss still falls 2.0×, while the relative $L^2$ moves
+0.94× — it has stopped tracking the loss entirely. At $d=1$ the two move
+together (2.6× and 2.6×). The natural suspect is in this repo's own metric
+study: a uniform collocation sample almost never lands where the solution's
+norm lives, since the top 1% of points carry 4.4% of $\|u\|^2$ at $d=1$ but
+47% at $d=8$ and 89% at $d=16$. The residual is being minimized where the
+samples are. That is a hypothesis consistent with these numbers, not a result —
+testing it means changing the sampling, which is a separate experiment.
+
+**Selecting the iterate by training loss is worth up to 3×, and it is free.**
+`highd_heat.train` returns the lowest-training-loss iterate rather than the last
+one (the loss contains no ground truth, so nothing about the exact solution
+enters the choice). Mean relative $L^2$ of the final iterate against the
+selected one: 2.5× worse at $d=1$, 3.1× at $d=2$, 1.9× at $d=4$, and 1.01× at
+$d=8$ — the tail oscillation §1's own log shows is real and costs a factor of a
+few, and it disappears exactly where the run has nothing left to oscillate about.
+
+**Cost per step is linear in $d$, and the wall clock is not reproducible.**
+Three passes on one idle machine spanned 219–248 ms/step at $d=16$; an earlier
+set of three spanned 213–284, moving the fitted slope from 12.4 to 17.0 ms and
+the intercept from 2.2 to 15.4. So the median of three is what the table and
+the fit report (13.4 + 13.1$d$ ms/step), and the load-bearing claim is the
+*shape*, which is pinned structurally rather than by a clock:
+`tests/test_highd_pinn.py` counts the reverse-mode passes in one residual
+evaluation and asserts exactly $d+2$ — one for $u_t$, one shared first gradient,
+one per spatial axis — against $2d+1$ for the naive form. Parameters grow only
+through the input layer, 3.8% from $d=1$ to $d=16$.
+
+Two things this section is **not**. It is not a claim about what a PINN can do
+at $d=16$ with a budget chosen for $d=16$: this is one budget, held fixed on
+purpose so the sweep measures $d$ and not a tuner, and finding the budget each
+$d$ needs is a different experiment. And it is not yet the comparison §10 asked
+for — that needs cost to a *fixed accuracy* on both sides, which is the next
+thing here.
 
 ## Reproduce
 
@@ -659,7 +748,7 @@ Every figure, from a clean clone, without training anything:
 python -m venv .venv && source .venv/bin/activate
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt && pip install -e .
-./reproduce.sh                  # tests, then all 14 figures: ~1 min
+./reproduce.sh                  # tests, then all 15 figures: ~1 min
 ```
 
 Training this repo end to end is about three hours of CPU, so the artifacts
@@ -680,7 +769,7 @@ committed rather than regenerated on demand.
 To actually retrain:
 
 ```bash
-pytest -q                       # 196 tests, ~1 min
+pytest -q                       # 222 tests, ~1 min
 cd experiments
 python heat.py                  # ~25 min (default solve + both sweeps)
 python heat.py --tail           # ~8 min  (final-iterate spread of the width sweep)
@@ -694,6 +783,7 @@ python crank_nicolson.py        # <1 s   (classical FD baseline vs the PINN)
 python highd_mesh.py --order    # ~6 s   (ADI convergence order; error vs d at fixed N)
 python highd_mesh.py --steps    # ~9 s   (how many time steps a grid actually needs)
 python highd_mesh.py --sweep    # ~85 s  (cost to fixed accuracy vs d, through d=6)
+python highd_pinn.py --sweep    # ~2 h   (PINN at d = 1..16, 3 seeds, + cost per step)
 python hard_bc.py               # ~14 min (hard-constraint ansatz vs soft penalty)
 python inverse.py               # ~40 min (inverse problem: 3 sweeps, 14 solves)
 python loss_weighting.py        # ~50 min (loss weights: 5 measurements, 60 solves)
@@ -745,16 +835,23 @@ so the reproduction path cannot quietly rot.
 - **Where PINNs actually earn their place**: the inverse problem is measured in
   §8 — a coefficient recovered from 200 noisy point samples by adding one data
   term and one `nn.Parameter`, with no boundary data and no adjoint solver to
-  hand-derive. **High dimension is half-measured.** §10 has the mesh side: the
-  $d$-dimensional problem, an ADI solver run out to $d=6$, and the wall it hits
-  above that. The PINN side — the same problem, the same accuracy, the same
-  axes — is *not run yet*, so §10 is one curve and not a comparison, and nothing
-  in this repo yet shows a PINN winning anywhere. **Irregular geometry** remains
-  undemonstrated entirely.
-- **The PINN results are 1D + time.** The *problem* is now $d$-dimensional
-  (`highd_heat.py`, with a closed-form solution at every $d$) and the *mesh
-  baseline* has been run to $d=6$ (§10), but every trained network reported here
-  still solves a one-dimensional problem. (L-BFGS is studied in §4,
+  hand-derive. **High dimension is now measured on both sides, and it does not
+  favour the PINN.** §10 runs an ADI mesh out to $d=6$ and shows the wall above
+  it; §11 runs the network at $d = 1, 2, 4, 8, 16$ at one fixed budget and finds
+  the relative $L^2$ rising 1270× over that range, past 1.0 — the score of a
+  network that outputs zero — by $d=16$. Cost per step is linear in $d$ as
+  promised; accuracy is what fails, so nothing in this repo yet shows a PINN
+  winning anywhere. What is still missing is the comparison at *equal
+  accuracy*, which is what would settle whether a crossover exists at all.
+  **Irregular geometry** remains undemonstrated entirely.
+- **Every PINN result except §11 is 1D + time**, and §11 is one budget rather
+  than a search: the same architecture, step count and collocation count run at
+  every $d$, on purpose, so that the sweep measures dimension and not a tuner.
+  Whether a budget chosen *for* $d=8$ or $d=16$ — more collocation points,
+  importance-sampled ones, a wider net, longer training — recovers the accuracy
+  is not tested here, and §11's own last-quarter numbers ($d=8$: loss still
+  falling 2.0×, error flat at 0.94×) say the answer is not simply "train
+  longer". (L-BFGS is studied in §4,
   residual-adaptive collocation in §5, and hard boundary conditions in §7 — all
   three were on this list. Soft penalties remain the default because the hard
   ansatz must be hand-derived per problem, §7.)
