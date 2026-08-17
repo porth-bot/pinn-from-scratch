@@ -1,2 +1,4 @@
 d,target,seed,steps,reached,cross_step,cross_seconds,cross_rel_l2,best_rel_l2,final_rel_l2,final_stderr,best_loss,best_step,train_seconds,wall_seconds
 4,1e-02,0,20000,0,,,,1.978855e-02,1.917279e-02,3.788010e-05,2.130077e-05,19773,1530.62,1544.13
+8,1e-01,0,10000,0,,,,7.051768e-01,7.055215e-01,1.575374e-03,5.058569e-05,10000,648.75,652.56
+4,1e-02,1,20000,0,,,,1.706894e-02,1.683684e-02,2.660336e-05,2.073853e-05,19590,804.33,810.54

@@ -264,11 +264,66 @@ def test_a_split_probe_cell_is_reported_as_split():
     assert rev["assumed_steps"] == c["assumed_steps"]
 
 
-def _probe_trace(d, target, errs, first=250):
-    return [{"d": str(d), "target": f"{target:.0e}", "seed": "0",
+def _probe_trace(d, target, errs, first=250, seed=0):
+    return [{"d": str(d), "target": f"{target:.0e}", "seed": str(seed),
              "step": str(first * (i + 1)), "rel_l2": f"{e:.6e}",
              "loss": f"{e * e:.6e}", "train_seconds": f"{i:.1f}"}
             for i, e in enumerate(errs)]
+
+
+def test_probe_trend_quotes_the_budget_a_clean_rate_implies():
+    """``steps_to_target`` is what the extrapolation is *for*, so it is checked
+    against the closed form rather than against another fit.
+
+    ``err = 3 steps^-0.5`` hits 1e-2 when ``steps = (0.01/3)^(1/-0.5) = 90,000``.
+
+    Checked at 1e-4 rather than at machine precision, and the reason is the
+    point of the quantity: ``1/p`` sits in the exponent of the answer, so the
+    round-trip through the trace's six printed digits lands 1.2e-6 out. On real
+    data, where p differs between windows in the second decimal, that same
+    amplification is what puts the implied budgets orders of magnitude apart.
+    """
+    steps = np.arange(1, 41) * 250.0
+    t = probe_trend(4, 1e-2, _probe_trace(4, 1e-2, 3.0 * steps ** -0.5))
+    assert t["steps_min"] == pytest.approx(90_000.0, rel=1e-4)
+    assert t["steps_max"] == pytest.approx(90_000.0, rel=1e-4)
+    assert t["n_non_decaying"] == 0
+
+
+def test_probe_trend_implies_no_arrival_from_a_rising_window():
+    """A window whose error is flat or rising implies no arrival at all.
+
+    Counting those separately is what keeps 'the rate is uncertain' apart from
+    'part of this trajectory is not converging' -- the d = 4 and d = 8 probes
+    fail in those two different ways, and the report says which.
+    """
+    steps = np.arange(1, 41) * 250.0
+    errs = 3.0 * steps ** -0.5
+    errs[20:] = np.linspace(errs[20], errs[20] * 3, 20)     # tail turns upward
+    t = probe_trend(4, 1e-2, _probe_trace(4, 1e-2, errs))
+    assert t["n_non_decaying"] >= 1
+    assert t["exponent_max"] > 0
+    # The rising windows contribute no implied budget rather than a nonsense one.
+    assert all(f["steps_to_target"] is None
+               for f in t["fits"] if f["exponent"] >= 0)
+
+
+def test_probe_trend_fits_each_seed_separately_and_never_pools_them():
+    """Pooling two runs would make the spread it reports uninterpretable.
+
+    Two seeds with visibly different rates: the fits must carry both seeds and
+    both exponents, rather than one regression through the interleaved cloud.
+    """
+    steps = np.arange(1, 41) * 250.0
+    rows = (_probe_trace(4, 1e-2, 3.0 * steps ** -0.5, seed=0)
+            + _probe_trace(4, 1e-2, 3.0 * steps ** -0.25, seed=1))
+    t = probe_trend(4, 1e-2, rows)
+    assert t["seeds"] == [0, 1]
+    assert {f["seed"] for f in t["fits"]} == {0, 1}
+    by_seed = {s: [f["exponent"] for f in t["fits"] if f["seed"] == s]
+               for s in (0, 1)}
+    assert all(e == pytest.approx(-0.5, abs=1e-6) for e in by_seed[0])
+    assert all(e == pytest.approx(-0.25, abs=1e-6) for e in by_seed[1])
 
 
 def test_probe_trend_recovers_a_clean_power_law_in_every_window():

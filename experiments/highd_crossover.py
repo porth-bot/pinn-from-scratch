@@ -237,34 +237,65 @@ def probe_trend(d, target, trace_rows=None, windows=((0.1, 1.0), (0.25, 1.0),
     """
     trace_rows = (read_csv(PROBE_TRACE_CSV) if trace_rows is None else trace_rows)
     key = f"{target:.0e}"
-    pts = sorted((int(r["step"]), float(r["rel_l2"]), float(r["loss"]))
-                 for r in trace_rows
-                 if int(r["d"]) == d and r["target"] == key)
-    if len(pts) < 4:
+    cell = [r for r in trace_rows if int(r["d"]) == d and r["target"] == key]
+    seeds = sorted({int(r["seed"]) for r in cell})
+    if not seeds:
         return None
-    last = pts[-1][0]
 
-    fits = []
-    for lo, hi in windows:
-        seg = [p for p in pts if lo * last <= p[0] <= hi * last and p[0] > 0]
-        if len(seg) < 3:
+    # Per seed, never pooled. Pooling two runs into one regression would make
+    # the "does the rate hold still" question unanswerable, because the spread
+    # it measures would be part between-seed and part along-trajectory.
+    fits, tails, quarters, bests, all_pts = [], [], [], [], []
+    for seed in seeds:
+        pts = sorted((int(r["step"]), float(r["rel_l2"]), float(r["loss"]))
+                     for r in cell if int(r["seed"]) == seed)
+        if len(pts) < 4:
             continue
-        slope, _ = np.polyfit(np.log([p[0] for p in seg]),
-                              np.log([p[1] for p in seg]), 1)
-        fits.append({"from_step": seg[0][0], "exponent": float(slope),
-                     "n": len(seg)})
+        last = pts[-1][0]
+        all_pts.append((seed, last))
+        bests.append(min(p[1] for p in pts))
+        for lo, hi in windows:
+            seg = [p for p in pts if lo * last <= p[0] <= hi * last and p[0] > 0]
+            if len(seg) < 3:
+                continue
+            slope, icept = np.polyfit(np.log([p[0] for p in seg]),
+                                      np.log([p[1] for p in seg]), 1)
+            # What the window implies it would cost to arrive. This is the
+            # quantity the extrapolation would be *for*, so it is the one whose
+            # spread decides whether the extrapolation is worth quoting -- a
+            # tighter test than agreement between the exponents themselves,
+            # since 1/p sits in the exponent of the answer.
+            need = (float(np.exp((np.log(target) - icept) / slope))
+                    if slope < 0 else None)
+            fits.append({"seed": seed, "from_step": seg[0][0],
+                         "exponent": float(slope), "n": len(seg),
+                         "steps_to_target": need})
+        tails.append([p for p in pts if p[0] >= 0.5 * last])
+        quarters.append([p for p in pts if p[0] >= 0.75 * last])
+    if not fits:
+        return None
 
-    tail = [p for p in pts if p[0] >= 0.5 * last]
-    quarter = [p for p in pts if p[0] >= 0.75 * last]
+    reachable = [f["steps_to_target"] for f in fits
+                 if f["steps_to_target"] is not None]
+    tail_spread = max(max(p[1] for p in t) / min(p[1] for p in t)
+                      for t in tails)
     return {
-        "d": d, "target": key, "steps": last,
+        "d": d, "target": key, "seeds": seeds,
+        "steps": max(last for _, last in all_pts),
         "fits": fits,
-        "exponent_min": min(f["exponent"] for f in fits) if fits else None,
-        "exponent_max": max(f["exponent"] for f in fits) if fits else None,
-        "tail_spread": max(p[1] for p in tail) / min(p[1] for p in tail),
-        "best": min(p[1] for p in pts),
-        "loss_fall": quarter[0][2] / quarter[-1][2],
-        "error_fall": quarter[0][1] / quarter[-1][1],
+        "exponent_min": min(f["exponent"] for f in fits),
+        "exponent_max": max(f["exponent"] for f in fits),
+        # A window whose fitted error is flat or *rising* implies no arrival at
+        # all; counting them is what separates "the rate is uncertain" from
+        # "some of the trajectory is not converging".
+        "n_non_decaying": sum(1 for f in fits if f["exponent"] >= 0),
+        "n_fits": len(fits),
+        "steps_min": min(reachable) if reachable else None,
+        "steps_max": max(reachable) if reachable else None,
+        "tail_spread": tail_spread,
+        "best": min(bests),
+        "loss_fall": np.mean([q[0][2] / q[-1][2] for q in quarters]),
+        "error_fall": np.mean([q[0][1] / q[-1][1] for q in quarters]),
     }
 
 
@@ -288,12 +319,29 @@ def report_probe(probe_rows=None, trace_rows=None):
         t = probe_trend(d, target, trace_rows)
         if t is None:
             continue
-        span = ", ".join(f"{f['exponent']:+.2f} (from step {f['from_step']})"
-                         for f in t["fits"])
-        print(f"    err ~ steps^p fitted over four windows: {span}")
-        print(f"    -> p is not identified: the trailing half of the "
-              f"trajectory spans {t['tail_spread']:.1f}x, so no extrapolation "
-              f"to the target is quoted")
+        print(f"    err ~ steps^p over {t['n_fits']} windows: p in "
+              f"[{t['exponent_min']:+.3f}, {t['exponent_max']:+.3f}], "
+              f"trailing half spans {t['tail_spread']:.1f}x")
+
+        # Two different failures, and conflating them would waste the stronger
+        # one. If some window has the error flat or rising, the trajectory is
+        # not converging there and no arrival is implied at all. If every
+        # window decays but the implied budgets span orders of magnitude, the
+        # *number* is unidentified -- yet if even the most optimistic of them
+        # is out of reach, that conclusion survives the whole spread.
+        if t["n_non_decaying"]:
+            print(f"    -> {t['n_non_decaying']} of {t['n_fits']} windows have "
+                  f"the error flat or RISING, so no arrival is implied and no "
+                  f"budget-to-target is quoted")
+        if t["steps_min"] is not None:
+            lo, hi = t["steps_min"], t["steps_max"]
+            print(f"    -> implied steps to target span {lo:.2e} to {hi:.2e} "
+                  f"({lo / BUDGET['steps']:.3g}x to {hi / BUDGET['steps']:.3g}x "
+                  f"the fixed budget)")
+            if lo > 100 * BUDGET["steps"]:
+                print(f"       the number is not identified, but every window "
+                      f"agrees it is out of reach: the most optimistic asks "
+                      f"{lo / BUDGET['steps']:.3g}x the budget")
         print(f"    last quarter: loss falls {t['loss_fall']:.2f}x, error "
               f"{t['error_fall']:.2f}x (heuristic expectation "
               f"{np.sqrt(t['loss_fall']):.2f}x)")

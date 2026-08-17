@@ -1,4 +1,4 @@
 target,d_pinn_last_reached,d_crossover_lower_bound,headroom,pinn_seconds_at_crossover,mesh_seconds_at_crossover,crossover_mesh_measured,assumed_steps,d_mesh_last_measured,probe
-1e-01,4,19,15,480.3,982.6,0,1833,16,
-1e-02,2,13,11,351.8,495.4,0,1917,10,d=4 still 2.0x short in 1/1 seeds after 20000 steps
+1e-01,4,19,15,480.3,982.6,0,1833,16,d=8 still 7.1x short in 1/1 seeds after 10000 steps
+1e-02,2,13,11,351.8,495.4,0,1917,10,d=4 still 1.7x short in 2/2 seeds after 20000 steps
 1e-03,1,7,6,498.9,735.6,0,4750,6,

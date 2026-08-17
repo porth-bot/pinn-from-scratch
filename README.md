@@ -793,16 +793,33 @@ tested does the crossover happen anywhere the network can still deliver the
 accuracy.** That is the week's thesis losing on its own chosen ground, and it is
 the answer to the question §10 and §11 were both pointing at.
 
-**A larger budget does not rescue the cell that would matter most.** "It did not
-get there in 5000 steps" is a statement about a budget, so $d=4$ was re-run at
-4× — 20,000 steps, 1531 s. It got from 4.18e-2 to 1.98e-2 and stopped: still
-2.0× short of $10^{-2}$. No budget-to-target is quoted from it, and the reason
-is worth more than the number would have been. Fitting $\text{err}\sim
-\text{steps}^{-p}$ over four windows gives $p = -0.46, -0.35, -1.05, -0.53$ —
-the trailing half of the trajectory spans 7.2×, so $p$ is not identified and any
-extrapolation would be reporting the window rather than the method.
-`probe_trend` prints all four windows for exactly that reason, with a clean
-power law as its control.
+**A larger budget does not rescue either terminus, and the two fail
+differently.** "It did not get there in 5000 steps" is a statement about a
+budget, not about a method, so both cells that set a terminus were re-run with
+more of one.
+
+$d=8$ at $10^{-1}$, **2× the budget**, is the one the headline rests on, and it
+is emphatic: 10,000 steps land at 7.052e-1 against 7.06e-1 at 5000 steps — the
+extra budget bought **nothing at all**, and the cell is still 7.1× short. Unlike
+$d=4$ this trajectory is *stable*, its trailing half spanning only 1.2×, so its
+rate genuinely is measurable — and it measures flat: $p \in [-0.079, -0.017]$
+across all four windows. The implied budgets are unidentified as a *number*
+(5.2e14 to 3.5e53 steps) but every window agrees on the conclusion: **the most
+optimistic of them asks $10^{11}$ times the fixed budget**, which at 126 ms/step
+is some 66,000 years. And §11's decoupling is confirmed rather than assumed —
+over the last quarter the loss falls 4.25× while the error moves 1.03×, against
+a heuristic expectation of 2.06×.
+
+$d=4$ at $10^{-2}$, **4× the budget**, two seeds: 1.98e-2 and 1.71e-2, still
+1.7× short. Here the rate is genuinely *not* identified — 2 of 8 windows have
+the error flat or **rising**, and the implied budgets span 9.3× to $2.6\times
+10^{6}$× the fixed budget — so no budget-to-target is quoted, and `probe_trend`
+prints every window rather than the one that would have read best. But the error
+is still tracking the loss at this $d$: last quarter, loss 4.79× against error
+2.28×, expectation 2.19×. **That contrast is the useful part.** At $d=4$ the
+optimizer is merely slow; at $d=8$ it has stopped converting loss into accuracy
+at all, which is why more budget helps a little at one and not at all at the
+other.
 
 **Two things cut against the mesh here, and both are stated rather than
 absorbed.** Its grid is an even integer, so it *overshoots*: at $10^{-1}$ it
@@ -814,12 +831,15 @@ higher (median 1.22×). Both push the same way: the mesh's seconds above are if
 anything inflated relative to the PINN's, which is the conservative direction
 for the conclusion.
 
-**Not run, and so not claimed**: the $d=8$ probe at $10^{-1}$ and a second seed
-at $d=4$. Both were started and starved by external load on this machine (93
-CPU-seconds in 25 wall-minutes), so the $d=8$ terminus in the table rests on the
-5000-step budget alone, and the $d=4$ probe is one seed against a measured 1.23×
-seed spread. `probe_sweep` resumes from committed cells, so finishing them costs
-only their own runtime.
+**What this still does not test.** Every probe above varies *one* knob — the
+number of Adam steps — because that is the knob the fixed budget of §11 held
+down. A differently *shaped* budget is untouched: more collocation points,
+importance-sampled ones, a wider network, a different optimizer. This repo's own
+metric study is the reason to expect sampling to be the one that matters — the
+top 1% of uniform points carry 4.4% of $\|u\|^2$ at $d=1$ but 89% at $d=16$, so
+at high $d$ the residual is being minimized almost entirely where the samples
+are and almost nowhere near where the solution lives. Testing that means
+changing the sampling, which is a separate experiment.
 
 ## Reproduce
 
@@ -937,12 +957,13 @@ so the reproduction path cannot quietly rot.
   importance-sampled ones, a wider net, longer training — recovers the accuracy
   is not tested here, and §11's own last-quarter numbers ($d=8$: loss still
   falling 2.0×, error flat at 0.94×) say the answer is not simply "train
-  longer". §12 tested the nearest version of "train longer" that could be
-  afforded — $d=4$ at 4× the steps — and it moved the error 2.1× while leaving
-  the cell 2.0× short, so the budget question is narrowed but not closed. What a
-  *differently shaped* budget buys (importance-sampled collocation above all,
-  since this repo's own metric study says the top 1% of uniform points carry 89%
-  of the norm at $d=16$) is still untested. (L-BFGS is studied in §4,
+  longer". §12 tested "train longer" directly at both termini and it is not the
+  answer at either: $d=4$ at 4× the steps (two seeds) moved the error 2.4× and
+  is still 1.7× short, and $d=8$ at 2× the steps moved it **not at all** (7.052e-1
+  against 7.06e-1) while its loss fell 4.25×. So the step-count question is
+  closed and the answer is no. What a *differently shaped* budget buys —
+  importance-sampled collocation above all, since the top 1% of uniform points
+  carry 89% of the norm at $d=16$ — is what remains untested. (L-BFGS is studied in §4,
   residual-adaptive collocation in §5, and hard boundary conditions in §7 — all
   three were on this list. Soft penalties remain the default because the hard
   ansatz must be hand-derived per problem, §7.)
