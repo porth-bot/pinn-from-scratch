@@ -841,6 +841,171 @@ at high $d$ the residual is being minimized almost entirely where the samples
 are and almost nowhere near where the solution lives. Testing that means
 changing the sampling, which is a separate experiment.
 
+### 13. A second high-dimensional PDE, so it is not one equation (`experiments/highd_hjb.py`)
+
+§§10–12 measure one problem. The conclusion they reach — the network's accuracy
+collapses in $d$ long before the mesh's cost does — is either a fact about PINNs
+or a fact about the $d$-dimensional heat equation, and nothing in those three
+sections can tell the two apart. This one runs a second PDE at **exactly the same
+budget** (width 128, depth 4, 5000 Adam steps at $10^{-3}$, 4000 collocation
+points, seeds 0/1/2) and asks which it was.
+
+**The equation.** On $x \in [-1,1]^d$, $t \in [0,T]$, with the data at the
+*terminal* time:
+
+$$u_t + \nu \Delta_x u - \lambda |\nabla_x u|^2 + \sum_i q_i x_i^2 = 0,
+\qquad u(x,T) = \sum_i c_i x_i^2,$$
+
+with $u$ given exactly on all $2d$ faces. This is the Hamilton–Jacobi–Bellman
+equation of a linear-quadratic control problem — state $dX = a\,dt +
+\sqrt{2\nu}\,dW$, running cost $\sum_i q_i X_i^2 + |a|^2/4\lambda$ — and
+minimising over $a$ is what produces the $|\nabla u|^2$ term, with $a^\star =
+-2\lambda \nabla u$.
+
+**It is different from the heat problem in four ways, each of which was wanted.**
+It is nonlinear in the derivative the network supplies; it runs *backward* in
+time; its boundary data is inhomogeneous, so the boundary loss cannot be
+satisfied by shrinking the network toward zero; and its solution does not vanish
+with $d$ — where $\prod_i \sin(\pi x_i)$ has rms $2^{-d/2}$ and shrinks 170× over
+the sweep, the value function's spatial spread is essentially flat (sd 0.39 at
+$d=1$, 0.94 at $d=16$).
+
+**And one difference that is not claimed.** Under Cole–Hopf, $v = e^{-\lambda
+u/\nu}$ turns this into $v_t + \nu \Delta v = (\lambda/\nu)\left(\sum_i q_i
+x_i^2\right) v$ — *linear*, with a quadratic potential. So this is a test against
+a different target class, time direction and boundary data, not against an
+essentially nonlinear PDE. `tests/test_highd_hjb.py` runs the substitution rather
+than taking the disclaimer on trust.
+
+**The ground truth is closed form at every $d$.** With $u = \sum_i p_i(t) x_i^2 +
+r(t)$ the equation separates: $p_i' = 4\lambda p_i^2 - q_i$ (a *scalar* Riccati
+per coordinate — the matrix Riccati diagonalised by the isotropic control cost)
+and $r' = -2\nu \sum_i p_i$. Substituting $w = (p-k)/(p+k)$ with $k =
+\sqrt{q/4\lambda}$ gives $w' = \beta w$, so $p$ is elementary, and $r$ follows by
+partial fractions. Note $p_i(t)$ does not depend on $d$ **at all** — each
+coordinate's structure is literally the same function at every dimension, which
+the heat family could not manage. Verified five independent ways (residual by
+autograd in float64: $<3\times10^{-15}$; Cole–Hopf; Gauss–Legendre quadrature of
+the Riccati; central differences of the ODE; every exact moment against Monte
+Carlo).
+
+#### The metric had to change, and the change is measured, not asserted
+
+This solution has a large mean, and it grows with $d$: $\|u\|/\mathrm{sd}(u)$
+runs 1.58 → 3.67 over the sweep. A network that learned nothing but the average
+would score well on $\|e\|/\|u\|$, and would score better the higher $d$ went. So
+the headline metric here is $\|u_\theta - u\|_2 / \mathrm{sd}(u)$, for which the
+best constant predictor scores exactly 1.000 at every $d$ — the same convention
+as §11, where a network outputting zero scores exactly 1.0. **Sec. 11's numbers
+are converted onto it exactly** (the factor is closed form for the heat family
+too), so the comparison below never mixes conventions. Both are in the log.
+
+The denominators are not sampled: the spatial integrals of a quadratic form
+against the uniform measure are elementary, leaving a smooth one-dimensional $t$
+integral that Gauss–Legendre resolves to $10^{-12}$ (64 nodes vs 512).
+
+**And the estimator's precision *improves* with $d$ here, where the heat
+problem's collapses.** The same study, the same grid:
+
+| $n = 10^5$ | $d=1$ | $d=4$ | $d=8$ | $d=16$ |
+|---|---|---|---|---|
+| heat: rel. s.e. of the metric | 0.31% | 0.78% | 1.88% | **8.67%** |
+| heat: top 1% of points carry | 4.4% | 16.9% | 46.9% | **89.8%** |
+| HJB: rel. s.e. of the metric | 0.42% | 0.30% | 0.23% | **0.18%** |
+| HJB: top 1% of points carry | 5.6% | 4.9% | 3.8% | **3.0%** |
+
+That closes off the whole family of "the metric did it" objections, in the
+direction that makes them harder to make rather than easier.
+
+#### The result
+
+<p align="center"><img src="figures/highd_hjb.png" width="1000"></p>
+
+| $d$ | 1 | 2 | 4 | 8 | 16 |
+|---|---|---|---|---|---|
+| **HJB**, mean rel. error | 1.18e-2 | 1.24e-2 | 4.77e-2 | 3.31e-2 | **7.10e-1** |
+| median (3 seeds) | 1.01e-2 | 1.32e-2 | 1.65e-2 | 3.30e-2 | 6.95e-1 |
+| seed spread (max/min) | 1.95 | 1.40 | **8.47** | 1.06 | 2.16 |
+| **heat** (§11), same metric | 1.56e-3 | 5.94e-3 | 4.81e-2 | **8.28e-1** | 1.06 |
+| best constant scores | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 |
+| exact $E_x[u \mid t]$ scores | 0.971 | 0.964 | 0.943 | 0.898 | **0.821** |
+| $u=0$ scores | 1.581 | 1.810 | 2.236 | 2.875 | 3.666 |
+
+**The collapse is delayed by a factor of two in $d$, and it is not removed.**
+The heat sweep rises 678× over the range on this metric; the HJB sweep rises 60×.
+At $d=8$ — where the heat PINN has effectively failed, at 0.83 against a
+best-constant 1.0 — the HJB PINN is at 3.3e-2, **25× better**, with a seed spread
+of 1.06. Two dimensions further on, at $d=16$, the gap has closed to 1.5× and
+both are in the same bad place.
+
+**So neither of the two obvious readings of §11 survives.** It was not simply the
+heat equation's shrinking target: an entirely different PDE, with a target that
+does not shrink and a metric that gets *sharper* with $d$, still loses two orders
+of magnitude between $d=8$ and $d=16$. And it was not simply "PINNs fail in high
+dimension" either: at $d=8$ this network is doing genuinely well on a nonlinear
+problem in eight state dimensions plus time, which the heat sweep alone would
+have predicted it could not.
+
+**How badly $d=16$ fails, stated against something concrete.** The mean 0.710 sits
+between the best constant (1.000) and the exactly-known time profile $E_x[u\mid
+t]$ (0.821) — so **on average the network has bought a 14% improvement over
+knowing nothing whatever about $x$**, having spent 19 minutes per seed. One of the
+three seeds (0.981) is *worse* than that profile: it learned less about the
+spatial dependence than a predictor that ignores space entirely.
+
+**The trend is not monotone, and the reason is one seed, so the median is quoted
+next to the mean.** $d=4$'s mean (4.77e-2) is above $d=8$'s (3.31e-2), but $d=4$'s
+three seeds are 1.34e-2, 1.65e-2 and **1.13e-1** — an 8.5× spread against $d=8$'s
+1.06×. On medians the sweep is monotone — 1.01e-2, 1.32e-2, 1.65e-2, 3.30e-2, 6.95e-1.
+Three seeds cannot resolve an 8× outlier into either a tail or a regime, and this
+is exactly the pattern §1's tail study found: Adam does not settle on these
+objectives.
+
+**The selection criterion inverts at $d=16$, and nowhere else.** Every run is
+selected on lowest *training* loss, which contains no ground truth. At $d=4$ and
+$d=8$ that criterion ranks the three seeds perfectly. At $d=16$ it gets them
+backwards: the seed with the **lowest** loss (6.70e-2) has the **worst** error
+(0.981), while the seed at 6.79e-2 — 1.4% more loss — has the best (0.454). This
+is §11's loss/error decoupling appearing on a second PDE, at the same place in
+the sweep where the accuracy goes.
+
+**Normalised losses say the optimizer is genuinely worse at $d=16$, not just the
+metric.** Each loss is divided by the exact energy of what it matches (the
+residual by $\langle u_t^2\rangle$, the terminal and boundary terms by their own
+exact mean squares — the boundary energy alone grows 1.8 → 14.8 across the sweep,
+so the raw number would read as *improving*):
+
+| $d$ | 1 | 2 | 4 | 8 | 16 |
+|---|---|---|---|---|---|
+| relative residual | 0.051 | 0.054 | 0.049 | 0.048 | **0.119** |
+| relative terminal | 0.051 | 0.033 | 0.034 | 0.020 | 0.068 |
+| relative boundary | 0.018 | 0.008 | 0.025 | 0.009 | 0.035 |
+
+The residual is flat at ~0.05 for $d \leq 8$ — including at $d=4$, whose relative
+$L^2$ varies 8.5× across seeds — and then doubles. A flat residual across cells
+whose accuracy differs by 8× is worth noticing on its own: **the training
+objective is not a proxy for the error even where it ranks runs correctly.**
+
+**Cost per step** runs 26.4 → 227.3 ms over $d = 1 \to 16$, linear in $d$ as
+expected, and the residual here takes $d+1$ reverse-mode passes against the heat
+residual's $d+2$ (one shared first gradient supplies $u_t$, $|\nabla u|^2$ and
+the input to the Laplacian). The measured ratio to §11's step times moves toward
+$(d+1)/(d+2)$ with $d$ (0.86, 0.82, 0.92, 0.91, 0.99) but does not match it,
+which is unsurprising twice over: the residual is not the whole step, and this
+repo has established three times now that wall clock does not reproduce. The pass
+count is therefore pinned as a **call count** in the tests, not as a time.
+
+**What this does not settle.** There is no mesh baseline for this equation, so
+there is no §12-style crossover here — a nonlinear HJB does not yield to the
+Douglas ADI scheme of §10, and a nonlinear implicit solve in $d$ dimensions is a
+separate piece of work. The claim is narrower and it is the one that was missing:
+the $d$-dependence of §11 reproduces on a second, structurally different PDE, so
+it is not an artifact of that PDE's target, its metric, its linearity, or its
+homogeneous boundary data. Two PDEs is still two. And both are separable-mode
+problems with exact solutions, which is what makes them measurable at $d=16$ at
+all — a genuinely non-separable high-dimensional target has no ground truth here
+to be scored against, and nothing in this repo tests one.
+
 ## Reproduce
 
 Every figure, from a clean clone, without training anything:
@@ -849,11 +1014,12 @@ Every figure, from a clean clone, without training anything:
 python -m venv .venv && source .venv/bin/activate
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt && pip install -e .
-./reproduce.sh                  # tests, then all 15 figures: ~1 min
+./reproduce.sh                  # tests, then all 17 figures: ~2 min
 ```
 
-Training this repo end to end is about three hours of CPU, so the artifacts
-ship with it: CSV logs in `logs/`, trained weights in `checkpoints/`. The split
+Training this repo end to end is the better part of a day of CPU — the timings
+below add up to roughly nine hours — so the artifacts ship with it: CSV logs in
+`logs/`, trained weights in `checkpoints/`. The split
 matters — a figure of a *curve* can be rebuilt from a log, but a figure of a
 *field* (the error heatmaps, the Burgers slices, the k=32 profile) is a picture
 of the trained network, and only the weights reproduce that. Each experiment
@@ -870,7 +1036,7 @@ committed rather than regenerated on demand.
 To actually retrain:
 
 ```bash
-pytest -q                       # 222 tests, ~1 min
+pytest -q                       # 327 tests, ~1.5 min
 cd experiments
 python heat.py                  # ~25 min (default solve + both sweeps)
 python heat.py --tail           # ~8 min  (final-iterate spread of the width sweep)
@@ -885,6 +1051,12 @@ python highd_mesh.py --order    # ~6 s   (ADI convergence order; error vs d at f
 python highd_mesh.py --steps    # ~9 s   (how many time steps a grid actually needs)
 python highd_mesh.py --sweep    # ~85 s  (cost to fixed accuracy vs d, through d=6)
 python highd_pinn.py --sweep    # ~2 h   (PINN at d = 1..16, 3 seeds, + cost per step)
+python highd_crossover.py --mesh  # ~4 min (mesh cost at all three accuracy targets)
+python highd_crossover.py --probe # ~40 min (the near-miss cells at a larger step budget)
+python highd_hjb.py --check     # ~30 s  (the HJB exact solution against the PDE)
+python highd_hjb.py --metric    # ~2 min (Monte Carlo metric precision vs d)
+python highd_hjb.py --sweep     # ~2.5 h (HJB at d = 1..16, 3 seeds; --seconds N
+                                #         time-boxes the call and resumes)
 python hard_bc.py               # ~14 min (hard-constraint ansatz vs soft penalty)
 python inverse.py               # ~40 min (inverse problem: 3 sweeps, 14 solves)
 python loss_weighting.py        # ~50 min (loss weights: 5 measurements, 60 solves)
@@ -946,13 +1118,26 @@ so the reproduction path cannot quietly rot.
   $10^{-1}$, $10^{-2}$, $10^{-3}$), but the PINN stops reaching those targets at
   $d = 4$, 2 and 1 — so it fails 6 to 15 dimensions before its own cost
   advantage would have arrived. Cost per step is linear in $d$ as promised;
-  accuracy is what fails, so **nothing in this repo shows a PINN winning
-  anywhere.** **Irregular geometry** remains undemonstrated entirely, and is now
-  the strongest remaining candidate for a setting where the mesh's cost is the
-  binding constraint rather than the network's accuracy.
-- **Every PINN result except §11 is 1D + time**, and §11 is one budget rather
-  than a search: the same architecture, step count and collocation count run at
-  every $d$, on purpose, so that the sweep measures dimension and not a tuner.
+  accuracy is what fails, so **nothing in this repo shows a PINN winning a cost
+  comparison anywhere.** **Irregular geometry** remains undemonstrated entirely,
+  and is now the strongest remaining candidate for a setting where the mesh's
+  cost is the binding constraint rather than the network's accuracy.
+- **The $d$-dependence is not an artifact of the heat equation**, which §§10–12
+  on their own could not rule out. §13 runs a linear-quadratic HJB equation —
+  nonlinear, backward in time, inhomogeneous boundary data, and a target whose
+  spread does *not* shrink with $d$ — at the identical budget, and the collapse
+  reappears: 60× over $d = 1 \to 16$ on a metric where the best constant scores
+  1.000, ending at 0.710 against 0.821 for a predictor that knows the exact
+  $E_x[u \mid t]$ and nothing about $x$. What §13 *does* change is where the
+  collapse sits: at $d=8$ the HJB network reaches 3.3e-2 with a 1.06× seed
+  spread, where the heat network is already at 0.83. So "PINNs fail above some
+  dimension" is too coarse — the dimension is a property of the problem, and it
+  moved by a factor of two between the only two problems tested. There is **no
+  mesh baseline for the HJB**, so §13 contains no crossover and claims none.
+- **Every PINN result except §§11 and 13 is 1D + time**, and those two are one
+  budget rather than a search: the same architecture, step count and collocation
+  count run at every $d$, on purpose, so that the sweep measures dimension and
+  not a tuner.
   Whether a budget chosen *for* $d=8$ or $d=16$ — more collocation points,
   importance-sampled ones, a wider net, longer training — recovers the accuracy
   is not tested here, and §11's own last-quarter numbers ($d=8$: loss still
@@ -963,10 +1148,22 @@ so the reproduction path cannot quietly rot.
   against 7.06e-1) while its loss fell 4.25×. So the step-count question is
   closed and the answer is no. What a *differently shaped* budget buys —
   importance-sampled collocation above all, since the top 1% of uniform points
-  carry 89% of the norm at $d=16$ — is what remains untested. (L-BFGS is studied in §4,
+  carry 89% of the norm at $d=16$ — is what remains untested. §13 removes one
+  version of that explanation and not the other: its metric concentrates *less*
+  as $d$ grows (top 1% of points carry 5.6% at $d=1$ and 3.0% at $d=16$), so the
+  sampling story cannot be the whole of it — yet uniform collocation in a
+  16-dimensional box is still 4000 points in a space where they are all far
+  apart, and that is untouched by either section. (L-BFGS is studied in §4,
   residual-adaptive collocation in §5, and hard boundary conditions in §7 — all
   three were on this list. Soft penalties remain the default because the hard
   ansatz must be hand-derived per problem, §7.)
+- **Both high-dimensional problems are separable-mode problems with closed-form
+  solutions**, and that is not a coincidence — it is what makes an exact score at
+  $d=16$ possible at all, since there is no reference solution to compare against
+  up there. A genuinely non-separable high-dimensional target would be a harder
+  test and cannot be scored by anything in this repo. §13's nonlinearity is
+  likewise removable by Cole–Hopf (checked, not assumed), so neither section
+  tests an essentially nonlinear PDE in high $d$.
 
 ## References
 
