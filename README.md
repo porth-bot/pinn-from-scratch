@@ -21,6 +21,72 @@ quadrature. The PINN (middle) reaches **1.17e-2** relative L2, and the error
 (right) is not spread over the domain — it is a thin bright line exactly on
 the shock.*
 
+## What this repo measured
+
+Two halves, reaching conclusions that look opposite until you notice they are
+about different things. Both were run because either one alone would be
+misleading.
+
+**§§1–9, one space dimension plus time: the mechanics, and where they break.**
+Exact autograd derivatives scored against Fourier-series and Cole-Hopf ground
+truths; spectral bias derived through the NTK and then measured; L-BFGS;
+residual-adaptive collocation; hard boundary conditions; an inverse problem; and
+what the loss weights actually decide. Here the classical solver wins and §6
+measures by how much — Crank-Nicolson on a 20×20 grid beats the PINN's accuracy
+at about $4\times10^{5}$ times less wall clock. Nothing in this half argues that
+a PINN should be solving these PDEs.
+
+**§§10–14, up to sixteen dimensions: the case usually made *for* PINNs, put on a
+fair axis.** The mesh's cost is exponential in $d$ and the network's is linear,
+so a crossover has to exist somewhere. It does, and §12 computes it: the mesh
+becomes the dearer method at $d \geq 19$, 13 and 7 for accuracy targets of
+$10^{-1}$, $10^{-2}$ and $10^{-3}$. **The PINN stops reaching those targets at
+$d = 4$, 2 and 1** — six to fifteen dimensions before its own cost advantage
+would have arrived, and both ends move in as the target tightens, the PINN's
+faster. At one fixed budget its relative $L^2$ rises **1270×** across
+$d = 1 \to 16$, ending at 1.041, where a network that outputs zero everywhere
+scores exactly 1.0. So no target tested has a crossover anywhere the network can
+still deliver the accuracy, and nothing here shows a PINN winning a cost
+comparison.
+
+**Then the control that reframes all of it.** Replace the physics-informed loss
+with supervised regression onto the *exact solution* — same architecture, same
+points, same budget — and the gap closes to 12% at $d=8$ and 2% at $d=16$; at
+$d=16$ the regression cannot fit even the 4000 labels it was handed. The
+collapse is therefore mostly **not** a fact about PINNs. It is a width-128 tanh
+network failing to approximate a $2^{-d/2}$-scale concentrated target, and the
+residual formulation inherits that rather than causing it. §14 names the
+architecture — one width, one depth, one activation everywhere above $d=1$ — as
+the binding untested variable this repo leaves behind.
+
+Two PDEs rather than one: §13 repeats the whole sweep on a linear-quadratic HJB
+equation (nonlinear in $\nabla u$, backward in time, inhomogeneous boundary data,
+and a target whose spread does *not* shrink with $d$), at the identical budget.
+The collapse reappears — **delayed by a factor of two in $d$, not removed** — so
+"PINNs fail above some dimension" is too coarse a statement to be worth making:
+the dimension is a property of the problem, and it moved 2× between the only two
+problems tested.
+
+### The sections
+
+| | | |
+|---|---|---|
+| [1](#1-the-heat-equation-vs-its-exact-fourier-series-experimentsheatpy) | heat equation vs its exact Fourier series | the baseline solve, and a width sweep its own final iterates do not establish |
+| [2](#2-burgers-equation-via-cole-hopf-experimentsburgerspy) | Burgers via Cole-Hopf | the canonical benchmark, against quadrature rather than a grid |
+| [3](#3-spectral-bias-the-failure-mode-measured-experimentsspectral_biaspy) | spectral bias | derived from the NTK, measured, and then fixed with Fourier features |
+| [4](#4-optimizer-our-adam-vs-torch-l-bfgs-experimentsoptimizer_studypy) | Adam vs L-BFGS | our Adam against torch's L-BFGS, and the hybrid |
+| [5](#5-residual-adaptive-collocation-a-failure-mode-and-its-fix-experimentsadaptive_collocationpy) | residual-adaptive collocation | RAD/RAR on the Burgers shock, three arms |
+| [6](#6-the-classical-baseline-crank-nicolson-finite-differences-experimentscrank_nicolsonpy) | the classical baseline | finite differences, and the $4\times10^{5}$ |
+| [7](#7-hard-boundaryinitial-conditions-a-trial-function-ansatz-experimentshard_bcpy) | hard boundary conditions | a trial-function ansatz against the soft penalty |
+| [8](#8-the-inverse-problem-recover-the-coefficient-from-noisy-data-experimentsinversepy) | the inverse problem | a coefficient recovered from noisy points, no adjoint |
+| [9](#9-what-the-loss-weights-actually-decide-experimentsloss_weightingpy) | what the loss weights decide | 60 solves; the trivial-solution cliff is real and three decades away |
+| [10](#10-the-mesh-in-d-dimensions-and-where-it-stops-experimentshighd_meshpy) | the mesh in $d$ dimensions | ADI out to $d=6$, and the wall above it |
+| [11](#11-the-pinn-in-d-dimensions-at-one-fixed-budget-experimentshighd_pinnpy) | the PINN in $d$ dimensions | one budget at $d = 1,2,4,8,16$; the 1270× |
+| [12](#12-the-crossover-at-equal-accuracy-experimentshighd_crossoverpy) | the crossover, at equal accuracy | three targets; where it is, and why the network never gets there |
+| [13](#13-a-second-high-dimensional-pde-so-it-is-not-one-equation-experimentshighd_hjbpy) | a second high-$d$ PDE | linear-quadratic HJB at the same budget |
+| [14](#14-where-it-degrades-anyway-and-which-part-degrades-experimentshighd_degradepy) | which part degrades | samplers, density, seeds, and the supervised control |
+| [15](#15-the-wave-equation-a-dalembert-ground-truth-and-a-kink-experimentswavepy) | the wave equation | d'Alembert on the odd extension, a kink, and a conserved energy |
+
 ## What a PINN is, and why the derivatives are the whole story
 
 A finite-difference or spectral solver stores $u$ on a grid and approximates
@@ -712,7 +778,11 @@ study: a uniform collocation sample almost never lands where the solution's
 norm lives, since the top 1% of points carry 4.4% of $\|u\|^2$ at $d=1$ but
 47% at $d=8$ and 89% at $d=16$. The residual is being minimized where the
 samples are. That is a hypothesis consistent with these numbers, not a result —
-testing it means changing the sampling, which is a separate experiment.
+testing it means changing the sampling, and **§14 changed it and the hypothesis
+lost**: drawing collocation points from where the solution lives buys 122×
+the effective sample and fits the initial condition 5.0× better on its own
+points, while scoring 1.9× *worse* at $d=8$ and 12.1× worse on the uniform
+metric. The suspect above is named there and acquitted.
 
 **Selecting the iterate by training loss is worth up to 3×, and it is free.**
 `highd_heat.train` returns the lowest-training-loss iterate rather than the last
@@ -838,8 +908,18 @@ importance-sampled ones, a wider network, a different optimizer. This repo's own
 metric study is the reason to expect sampling to be the one that matters — the
 top 1% of uniform points carry 4.4% of $\|u\|^2$ at $d=1$ but 89% at $d=16$, so
 at high $d$ the residual is being minimized almost entirely where the samples
-are and almost nowhere near where the solution lives. Testing that means
-changing the sampling, which is a separate experiment.
+are and almost nowhere near where the solution lives.
+
+**§14 tested the two sampling knobs on that list — plus a third that was not on
+it — and none of them is the answer.** Importance-sampled collocation is 1.9×
+worse at $d=8$ and 12.1× worse at $d=16$ (it trades coverage for weighting, and
+the metric scores coverage); a 16× range in collocation *count* at $d=8$ moves
+the error 1.03×, less than the five-seed spread; and residual-adaptive
+collocation, the knob not listed here, moves nothing either. So the sampling
+expectation stated above is measured and wrong. What is left untouched from the
+list is a **wider network and a different optimizer** — and §14's supervised
+control is the reason to think the first of those is where the question now
+lives.
 
 ### 13. A second high-dimensional PDE, so it is not one equation (`experiments/highd_hjb.py`)
 
@@ -1357,6 +1437,12 @@ so the reproduction path cannot quietly rot.
   accuracy, and convergence *guarantees* (the PINN offers a nonconvex loss and
   no error order). **This repo is a study of the method's mechanics and
   failure modes, not an argument that PINNs should solve these PDEs.**
+  That sentence is about *low* dimension, and the companion measurement is the
+  next bullet: the dimension where the classical solver's advantage reverses is
+  computable ($d \geq 19$, 13, 7 as the target tightens), and the PINN's
+  accuracy fails 6 to 15 dimensions before it. So the lead does not need
+  qualifying anywhere this repo can measure — but it is a statement about a
+  regime, not about the methods in general, and §12 is what establishes which.
 - **Where PINNs actually earn their place**: the inverse problem is measured in
   §8 — a coefficient recovered from 200 noisy point samples by adding one data
   term and one `nn.Parameter`, with no boundary data and no adjoint solver to
