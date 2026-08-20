@@ -594,8 +594,9 @@ def report(rows):
             print(f"  {s['ic']:>6}: energy {frac:.3f} of exact -- short of what "
                   f"the first mode alone carries ({hi:.3f})")
         else:
+            plural = "modes carry" if K != 1 else "mode carries"
             print(f"  {s['ic']:>6}: energy {frac:.3f} of exact -- between what "
-                  f"the first {K} mode{'s' if K != 1 else ''} carr{"y" if K != 1 else "ies"} ({lo:.3f}) "
+                  f"the first {K} {plural} ({lo:.3f}) "
                   f"and the first {K + 1} ({hi:.3f})")
 
 
