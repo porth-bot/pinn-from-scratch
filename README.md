@@ -1177,6 +1177,81 @@ supervised control, with the PINN arms dotted for comparison. All four panels
 replay from committed CSVs; nothing here retrains.)*
 
 
+### 15. The wave equation, a d'Alembert ground truth, and a kink (`experiments/wave.py`)
+
+Every PDE above is parabolic (§§1, 10–14), viscous (§2) or elliptic in time
+(§13). All of them *smooth* their initial data. The wave equation transports it
+instead, exactly and forever, which changes what the network is being asked to
+do — and lets a ground truth exist for initial data that is not smooth at all.
+
+$$u_{tt} = c^2 u_{xx},\quad u(0,t)=u(1,t)=0,\quad u(x,0)=f(x),\quad u_t(x,0)=0.$$
+
+**The reference is d'Alembert, not a truncated Fourier series.** With zero
+initial velocity, $u(x,t) = \tfrac12[F(x-ct) + F(x+ct)]$ where $F$ is the **odd
+2-periodic extension** of $f$ — odd about $x=0$ and, by periodicity plus
+oddness, about $x=1$ as well, which is exactly what makes both fixed ends hold
+for all time (the reflected wave arrives inverted). This is closed form for
+*any* $f$, so the second initial condition can have a corner. The sine series is
+exact too, but only as an infinite sum: for a plucked string $b_k \sim 1/k^2$, so
+a truncation is a different function with different second derivatives, and it
+is used here to *check* d'Alembert and never as the reference. `--check`
+measures the difference: at 50, 200 and 800 modes the rms gap is
+$6.6\times10^{-4}$, $9.6\times10^{-5}$, $1.9\times10^{-5}$ while the max gap
+falls only $9.6\times10^{-3} \to 6.0\times10^{-4}$ — Gibbs at the travelling
+corner, which is the whole difference. Both boundary conditions, the initial
+displacement and the zero initial velocity hold to $2\times10^{-16}$, and the
+PDE holds by central differences to $9\times10^{-8}$ away from the corners.
+
+**Two initial conditions.** `sine`: $f = \sin\pi x$, a standing wave, the
+control. `pluck`: a triangle peaking at $x_0 = 0.3$, continuous with a corner —
+so $u_{xx}$ is a delta and **the PDE holds only weakly**, while the residual a
+PINN minimises is the strong form. A tanh network is smooth and cannot represent
+the kink either. What it does instead is the measurement.
+
+One structural note, and it is the same one §14 ends on: $u \equiv 0$ satisfies
+the residual, both boundary conditions **and** the zero initial velocity
+exactly. The entire problem rides on the single initial-displacement term, and a
+network that outputs zero scores a relative $L^2$ of exactly 1.0 (asserted in
+the tests, and the number every row below is read against).
+
+| IC | mean rel $L^2$ (3 seeds) | spread | energy / exact | error near a corner | elsewhere |
+|---|---|---|---|---|---|
+| `sine` | $1.68\times10^{-2}$ | 1.48× | **0.988** | $1.72\times10^{-2}$ | $1.67\times10^{-2}$ |
+| `pluck` | $1.35\times10^{-1}$ | 1.09× | **0.766** | $2.42\times10^{-1}$ | $9.41\times10^{-2}$ |
+
+**The non-smooth initial condition costs 8×**, and the error is not spread out:
+inside a band of width 0.05 around the travelling corners it is 2.6× its value
+everywhere else, while for the smooth control the two regions are the same
+number to 3% — the split has no signal when there is no kink, which is what
+makes it evidence when there is one.
+
+**The energy says the same thing in units the loss never touches.** The
+continuous problem conserves $E = \int (u_t^2 + c^2u_x^2)/2$ exactly, and nothing
+in the objective knows that, so it is a diagnostic the optimizer cannot have
+targeted (the same role calibration plays in `gp-from-scratch`). The smooth run
+carries 98.8% of it. The plucked run carries **76.6%** — and 76.6% is between
+what the first Fourier mode of the pluck carries (63.2%) and what the first two
+carry (85.0%). So the network has resolved roughly the first two modes' worth of
+a spectrum that decays like $1/k^2$: **§3's spectral bias, arriving on a
+hyperbolic problem, measured as an energy deficit rather than as a frequency
+sweep.** The energy trace (right panel) shows it saturating there by step ~3000
+while the smooth run climbs to 1.
+
+What this does not show: no classical baseline is run here, so there is no cost
+comparison — a leapfrog scheme on this problem is a few lines and would beat the
+network on every axis, as §6 measured for the heat equation. And the corner is
+the only non-smoothness tested; a shock (§2) is a different failure with a
+different fix.
+
+![the wave equation against a d'Alembert ground truth](figures/wave.png)
+
+*(left) the exact plucked string at three times, corners travelling and
+reflecting inverted. (middle) rms error inside a 0.05 band around the corners
+against elsewhere, relative to the rms of $u$. (right) the network's energy
+against the exact conserved value, all six runs — nothing in the loss refers to
+it.)*
+
+
 ## Reproduce
 
 Every figure, from a clean clone, without training anything:
@@ -1185,7 +1260,7 @@ Every figure, from a clean clone, without training anything:
 python -m venv .venv && source .venv/bin/activate
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt && pip install -e .
-./reproduce.sh                  # tests, then all 18 figures: ~2 min
+./reproduce.sh                  # tests, then all 19 figures: ~2 min
 ```
 
 Training this repo end to end is the better part of a day of CPU — the timings
@@ -1207,7 +1282,7 @@ committed rather than regenerated on demand.
 To actually retrain:
 
 ```bash
-pytest -q                       # 367 tests, ~1.5 min
+pytest -q                       # 395 tests, ~1.5 min
 cd experiments
 python heat.py                  # ~25 min (default solve + both sweeps)
 python heat.py --tail           # ~8 min  (final-iterate spread of the width sweep)
@@ -1232,6 +1307,8 @@ python highd_degrade.py --geometry # ~40 s (effective collocation count vs d)
 python highd_degrade.py --fit   # ~35 min (supervised control + its budget ladder)
 python highd_degrade.py --run   # ~2 h   (31 cells: 3 samplers, 4 densities,
                                 #         5 seeds; --seconds N time-boxes it)
+python wave.py --check          # ~5 s   (d'Alembert vs the sine series, no training)
+python wave.py --train          # ~25 min (wave equation: 2 ICs x 3 seeds)
 python hard_bc.py               # ~14 min (hard-constraint ansatz vs soft penalty)
 python inverse.py               # ~40 min (inverse problem: 3 sweeps, 14 solves)
 python loss_weighting.py        # ~50 min (loss weights: 5 measurements, 60 solves)
@@ -1341,6 +1418,16 @@ so the reproduction path cannot quietly rot.
   ceiling on the sample as well — 4000 uniform points with exact labels and 20×
   the budget do not determine the solution at $d=8$ to better than 0.254, which
   no choice of objective can beat.
+- **§15 has no classical baseline**, so nothing there is a cost comparison — a
+  leapfrog scheme on a plucked string is a few lines and would win on every
+  axis, as §6 measured for the heat equation. The section's claims are about
+  *where* the network's error sits (2.6× concentrated on the travelling corners)
+  and how much of the conserved energy it carries (76.6%, between the first and
+  second Fourier modes of the pluck), not about whether a PINN should be used
+  for this. A corner is also the only non-smoothness tested; a shock (§2) is a
+  different failure with a different fix, and discontinuous initial *data* —
+  where d'Alembert still gives an exact answer and the strong-form residual is
+  even less meaningful — is not run.
 - **Both high-dimensional problems are separable-mode problems with closed-form
   solutions**, and that is not a coincidence — it is what makes an exact score at
   $d=16$ possible at all, since there is no reference solution to compare against

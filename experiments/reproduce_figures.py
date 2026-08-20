@@ -9,7 +9,7 @@ them back into the figures:
                                    spectral_pinn, optimizer_study,
                                    crank_nicolson, inverse, highd_mesh,
                                    highd_pinn, highd_crossover, highd_hjb,
-                                   highd_degrade
+                                   highd_degrade, wave
     logs + checkpoints/*.pt     -> spectral_fix, hard_bc
     checkpoints/*.pt            -> heat_error, burgers_error, burgers_slices,
                                    adaptive_collocation
@@ -46,6 +46,7 @@ import inverse
 import loss_weighting
 import optimizer_study
 import spectral_bias
+import wave
 
 ROOT = Path(__file__).resolve().parent.parent
 LOGS = ROOT / "logs"
@@ -71,6 +72,7 @@ FIGURES = (
     "highd_crossover.png",        # highd_crossover, from its mesh/pinn/probe CSVs
     "highd_hjb.png",              # highd_hjb, from its sweep/trace CSVs
     "highd_degrade.png",          # highd_degrade, from its cells/geometry/fit CSVs
+    "wave.png",                   # wave, from its cells/trace CSVs
 )
 
 LOG_FILES = (
@@ -90,6 +92,7 @@ LOG_FILES = (
     "highd_hjb_metric.csv", "highd_hjb_check.csv",
     "highd_degrade_cells.csv", "highd_degrade_trace.csv",
     "highd_degrade_geometry.csv", "highd_degrade_fit.csv",
+    "wave_cells.csv", "wave_trace.csv", "wave_check.csv",
 )
 
 CKPT_FILES = (
@@ -140,6 +143,8 @@ def main():
          highd_hjb.figures_from_committed),
         ("high-d degradation (which part of the method fails)",
          highd_degrade.figures_from_committed),
+        ("wave equation (d'Alembert truth, kink error, energy)",
+         wave.figures_from_committed),
     ):
         print(f"\n>>> {label}")
         fn()
