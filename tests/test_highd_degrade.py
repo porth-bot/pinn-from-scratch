@@ -190,6 +190,23 @@ def test_tilted_points_are_further_from_the_boundary():
     assert near(til) < 0.5 * near(uni)
 
 
+@pytest.mark.parametrize("d", [4, 8, 16])
+def test_tilted_density_at_a_typical_point_is_2_to_the_minus_d(d):
+    """How much of the cube the tilt walks away from, exactly.
+
+    The tilted density relative to uniform is ``2^d phi^2``, and phi's geometric
+    mean is ``2^-d`` (``E[log sin(pi x)] = -log 2``), so at a typical point of
+    the cube the sampler puts about ``2^-d`` of the uniform density there --
+    1.5e-5 at d = 16. That is the README's statement of what the tilted arm gives
+    up, so it is checked rather than asserted in prose; the tolerance is a factor
+    of 3 because the median of a product of 16 factors is not its geometric mean.
+    """
+    rng = np.random.default_rng(11)
+    x = rng.random((200_000, d))
+    ratio = 2.0 ** d * np.prod(np.sin(np.pi * x), axis=1) ** 2
+    assert 0.5 * 2.0 ** -d < np.median(ratio) < 3.0 * 2.0 ** -d
+
+
 # ---------------------------------------------------------------------------
 # 3. arm comparability
 # ---------------------------------------------------------------------------

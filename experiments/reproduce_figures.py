@@ -8,7 +8,8 @@ them back into the figures:
     logs/*.csv                  -> heat_convergence, spectral_regression,
                                    spectral_pinn, optimizer_study,
                                    crank_nicolson, inverse, highd_mesh,
-                                   highd_pinn, highd_crossover, highd_hjb
+                                   highd_pinn, highd_crossover, highd_hjb,
+                                   highd_degrade
     logs + checkpoints/*.pt     -> spectral_fix, hard_bc
     checkpoints/*.pt            -> heat_error, burgers_error, burgers_slices,
                                    adaptive_collocation
@@ -37,6 +38,7 @@ import crank_nicolson
 import hard_bc
 import heat
 import highd_crossover
+import highd_degrade
 import highd_hjb
 import highd_mesh
 import highd_pinn
@@ -68,6 +70,7 @@ FIGURES = (
     "highd_pinn.png",             # highd_pinn, from the sweep/trace/cost CSVs
     "highd_crossover.png",        # highd_crossover, from its mesh/pinn/probe CSVs
     "highd_hjb.png",              # highd_hjb, from its sweep/trace CSVs
+    "highd_degrade.png",          # highd_degrade, from its cells/geometry/fit CSVs
 )
 
 LOG_FILES = (
@@ -85,6 +88,8 @@ LOG_FILES = (
     "highd_crossover_summary.csv",
     "highd_hjb_sweep.csv", "highd_hjb_trace.csv",
     "highd_hjb_metric.csv", "highd_hjb_check.csv",
+    "highd_degrade_cells.csv", "highd_degrade_trace.csv",
+    "highd_degrade_geometry.csv", "highd_degrade_fit.csv",
 )
 
 CKPT_FILES = (
@@ -133,6 +138,8 @@ def main():
          highd_crossover.figures_from_committed),
         ("high-d HJB (a second PDE at the same budget)",
          highd_hjb.figures_from_committed),
+        ("high-d degradation (which part of the method fails)",
+         highd_degrade.figures_from_committed),
     ):
         print(f"\n>>> {label}")
         fn()

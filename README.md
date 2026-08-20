@@ -1006,6 +1006,177 @@ problems with exact solutions, which is what makes them measurable at $d=16$ at
 all — a genuinely non-separable high-dimensional target has no ground truth here
 to be scored against, and nothing in this repo tests one.
 
+### 14. Where it degrades anyway, and which part degrades (`experiments/highd_degrade.py`)
+
+§§11–13 all end in the same place: the network's accuracy collapses in $d$, "train
+longer" was tested at both termini and refused, and none of them says *what* is
+failing. The candidates are not interchangeable — the collocation sample, the
+optimizer, the physics-informed objective and the network itself would each be
+fixed by a different thing — so this section takes them apart. Everything below
+runs at **2000 Adam steps** rather than §11's 5000, which is measured rather than
+assumed: read off §11's own committed trace, seed 0, the relative $L^2$ at step
+2000 against step 5000 is $7.58\times10^{-1} \to 7.31\times10^{-1}$ at $d=8$ and
+$1.165 \to 1.016$ at $d=16$. In the regime this section studies the last 3000
+steps are worth 4% and 13%. At low $d$ the truncation costs more, which flatters
+the uniform baseline rather than the alternatives being tested against it.
+
+#### The effective collocation count, in closed form
+
+The initial condition is $\sum_m a_m \phi_m$ with $\phi_k(x) = \prod_i \sin(k_i
+\pi x_i)$, and every loss term is an empirical mean of a squared quantity whose
+size is set by $\phi$. The number of samples actually carrying such a mean is
+$\mathrm{ESS} = n\,(\mathbb{E}[w])^2/\mathbb{E}[w^2]$, and because $\phi$ is a
+product over independent coordinates, this factorises exactly. With
+$\int_0^1\sin^2 = \tfrac12$ and $\int_0^1\sin^4 = \tfrac38$:
+
+$$\frac{\mathrm{ESS}_{\text{uniform}}}{n} = \frac{(2^{-d})^2}{(3/8)^d} = \left(\frac{2}{3}\right)^{d}.$$
+
+**At $d=16$, §11's 4000 collocation points are worth 6.1 of them.** Holding 1000
+effective points needs $6.6\times10^{5}$ uniform points. And the sample stops
+being a sample geometrically as well: the mean nearest-neighbour distance among
+4000 points is 0.759 at $d=16$, against a cube of diameter 4.
+
+The same $(3/2)^d$ is already in this repo wearing different clothes — §10's
+metric standard error is $\sqrt{((3/2)^d-1)/n}$. The estimator's precision and
+the optimizer's signal are limited by one quantity.
+
+**The diagnostic is optimistic about itself, which is worth knowing before
+trusting it.** The ESS is a ratio of moments estimated from the very sample it
+condemns; it is bounded below by 1, and a small sample rarely contains the rare
+points that carry the mass. Estimated from the 400 initial-condition points a cell
+actually draws, the median reading at $d=16$ is **4.06 against a true 0.61**
+(6.7×), and at $d \leq 6$ it is right to 5%. Same shape as
+`mcmc-from-scratch`'s AIS result, where the ESS read a perfect 1.000 on runs whose
+answer was wrong by a known amount.
+
+#### So put the points where the solution is — and lose
+
+The fix the law suggests is to draw $x$ from $\prod_i 2\sin^2(\pi x_i)$, the
+fundamental mode's energy. That is **not an oracle**: the initial condition is
+given data, on the right-hand side of the problem statement, and nothing about
+$u$ at $t>0$ enters it. The same factorisation gives
+$\mathrm{ESS}_{\text{tilted}}/n = (9/10)^d$, so the tilt is predicted to be worth
+$(27/20)^d$ — **122× more effective points at $d=16$, at identical cost per
+step**. That prediction is in `tests/test_highd_degrade.py`, asserted, because
+the arm it motivated went the other way.
+
+| $d$ | uniform | tilted | residual-adaptive | tilted / uniform |
+|---|---|---|---|---|
+| 2 | $8.50\times10^{-3}$ (5 seeds) | — | — | — |
+| 4 | $8.80\times10^{-2}$ (5) | $9.52\times10^{-2}$ (2) | — | 1.08× |
+| 8 | $7.48\times10^{-1}$ (5) | $1.424$ (2) | $7.38\times10^{-1}$ (2) | **1.90×** |
+| 16 | $1.154$ (2) | $13.98$ (2) | — | **12.1×** |
+
+**The ESS argument was right about what it predicted and wrong about what
+follows.** Measured on the points each cell actually drew — the IC error divided
+by the IC's energy *on that cell's own sample*, so the two arms are comparable —
+the tilted arm fits the initial condition **5.0× better at $d=8$** (0.137 against
+0.696) and **2.2× better at $d=16$** (0.461 against 1.010). The extra effective
+points are delivered. They just do not buy the thing being scored: the metric is
+the uniform $L^2$ error over the whole cube, and the tilted sample is not in most
+of it. At a typical point the tilted density is $2^d\phi^2 \approx 2^{-d}$ times
+uniform — $1.5\times10^{-5}$ at $d=16$, measured at $3.2\times10^{-5}$ — so the
+sampler effectively never goes there, and a network left free there is wrong
+there by more than $\|u\|$ itself. **Tilting trades coverage for weighting,
+and above $d=4$ the trade is bad and gets worse.** At $d=16$ the uniform arm's
+own-sample IC error is 1.010 — *worse than predicting zero on its own points* —
+so neither arm is a method; they fail in complementary ways.
+
+**Residual-adaptive collocation (§7's RAR, unchanged, one-third of the points
+redrawn every 250 steps) does nothing at all**: $7.38\times10^{-1}$ against
+uniform's $7.48\times10^{-1}$, inside the seed spread. That was predictable and
+is stated as a prediction: $u \equiv 0$ satisfies the residual and the
+homogeneous boundary condition *exactly*, so the residual carries no information
+about where the solution's support is until the initial condition has already
+been fitted. The repo's own adaptive tool is aimed at a localized sharp feature
+(a shock), and this failure has no such feature.
+
+#### More points do not help either
+
+At $d=8$, uniform, the same budget of steps:
+
+| $n$ | effective | mean relative $L^2$ | seconds |
+|---|---|---|---|
+| 500 | 19.5 | $7.34\times10^{-1}$ | 49 |
+| 2000 | 78.0 | $7.33\times10^{-1}$ | 132 |
+| 4000 | 156.1 | $7.48\times10^{-1}$ | 273 |
+| 8000 | 312.1 | $7.25\times10^{-1}$ | 767 |
+
+**A 16× range in collocation points moves the error by 1.03×**, which is less
+than the five-seed spread at $n=4000$ (1.05×), for 16× the wall clock. Whatever
+binds at $d=8$, it is not the number of collocation points.
+
+And the seed spread does not grow with $d$ either — max/min over 5 seeds is
+1.20 at $d=2$, 1.46 at $d=4$, **1.05 at $d=8$**, and 1.02 over 2 seeds at
+$d=16$. High $d$ is not a high-variance regime here; every seed converges to the
+same failure. (§11's 5000-step spreads agree: 1.68, 1.03, 1.23, 1.07, 1.06.)
+
+#### The control that reframes §§11–13: the PDE is not what is failing
+
+Same architecture, same optimizer, same points, same step count — and the loss
+replaced by supervised regression onto the **exact solution**. No residual, no
+initial-condition penalty, no boundary penalty. Being handed the answer is the
+easiest version of the task, so it is a ceiling on what any objective using these
+points can do. Seed 0, uniform draw:
+
+| $d$ | 2000 steps (test / own sample) | 10000 steps | 40000 steps | PINN, 2000 steps |
+|---|---|---|---|---|
+| 4 | $9.65\times10^{-2}$ / $8.87\times10^{-2}$ | $2.79\times10^{-2}$ / $2.12\times10^{-2}$ | $1.33\times10^{-2}$ / $8.20\times10^{-3}$ | $1.06\times10^{-1}$ |
+| 8 | $6.71\times10^{-1}$ / $6.47\times10^{-1}$ | $3.07\times10^{-1}$ / $1.30\times10^{-1}$ | $2.54\times10^{-1}$ / $2.09\times10^{-2}$ | $7.54\times10^{-1}$ |
+| 16 | $1.144$ / $1.145$ | $1.031$ / $1.031$ | $9.57\times10^{-1}$ / $8.39\times10^{-1}$ | $1.164$ |
+
+Three things fall out, and the third is the section's point.
+
+**At the shared budget the failure is not generalization — it is that the network
+has not fitted anything.** Training-set and test error agree to within 9% at
+every $d$ and to 4% in the failing regime ($d \geq 8$);
+at $d=8$ regression scores 0.647 on the 4000 labels it was *given*, and at $d=16$
+it scores 1.145, which is what a network outputting zero scores on its own
+training set.
+
+**Given 20× the budget the two mechanisms separate, and both are real.** At $d=8$
+the fit finally lands (own-sample 0.021) while the test error stalls at 0.254:
+4000 uniform points, with exact labels and a generous budget, **do not determine
+the function to better than 0.25**. That is a ceiling the PINN cannot beat by any
+choice of objective. At $d=16$ there is no such handoff — 40,000 Adam steps still
+cannot fit the training set (0.839), so the network and the optimizer are the
+binding constraint before the sample even gets a say.
+
+**And the gap between "solve the PDE" and "be told the answer" closes to nothing
+in exactly the regime §§11–13 are about.** At $d=8$, at the same budget, the PINN
+scores $7.54\times10^{-1}$ against supervised regression's $6.71\times10^{-1}$ —
+12% apart. At $d=16$, 1.164 against 1.144 — 2% apart. (At $d=2$, the same
+comparison at the same budget goes the other way by 2.4×,
+$8.5\times10^{-3}$ against $2.05\times10^{-2}$ — the physics-informed prior
+doing real work where the network can still represent the target.) **So the high-dimensional collapse measured in
+§§11–13 is not a property of the physics-informed formulation. It is a property
+of a width-128 tanh network trained by Adam on this target at this dimension, and
+supervised learning with the exact solution in hand shares it.**
+
+The tilted arm makes the same point from the other side: its regression fits its
+own labels 7.5× better than uniform at $d=8$ ($1.41\times10^{-1}$ against
+$6.47\times10^{-1}$) and scores 4.2× worse on the metric ($2.83$ against
+$6.71\times10^{-1}$). Coverage against weighting, with no PDE anywhere in the
+experiment.
+
+**What this does and does not change about §§11–12.** It does not rescue the
+crossover: the PINN's accuracy still fails 6 to 15 dimensions before the mesh
+becomes expensive, and every number in §12 stands. What it changes is the
+attribution. §11 measured "the PINN's error rises 1270× over $d = 1 \to 16$" and
+it is now clear that most of that is not about PINNs — it is the network's
+approximation of a $2^{-d/2}$-scale needle from a sample that sees it at 6
+effective points. A better *architecture* for concentrated high-dimensional
+targets would move §§11–13's numbers; a better *sampler* at this architecture
+does not, and this section measured four of them.
+
+![where the high-dimensional PINN degrades](figures/highd_degrade.png)
+
+*(a) the effective collocation count, closed form against Monte Carlo. (b) the
+three samplers at one budget. (c) 16× the collocation points at $d=8$. (d) the
+supervised control, with the PINN arms dotted for comparison. All four panels
+replay from committed CSVs; nothing here retrains.)*
+
+
 ## Reproduce
 
 Every figure, from a clean clone, without training anything:
@@ -1014,7 +1185,7 @@ Every figure, from a clean clone, without training anything:
 python -m venv .venv && source .venv/bin/activate
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt && pip install -e .
-./reproduce.sh                  # tests, then all 17 figures: ~2 min
+./reproduce.sh                  # tests, then all 18 figures: ~2 min
 ```
 
 Training this repo end to end is the better part of a day of CPU — the timings
@@ -1036,7 +1207,7 @@ committed rather than regenerated on demand.
 To actually retrain:
 
 ```bash
-pytest -q                       # 327 tests, ~1.5 min
+pytest -q                       # 367 tests, ~1.5 min
 cd experiments
 python heat.py                  # ~25 min (default solve + both sweeps)
 python heat.py --tail           # ~8 min  (final-iterate spread of the width sweep)
@@ -1057,6 +1228,10 @@ python highd_hjb.py --check     # ~30 s  (the HJB exact solution against the PDE
 python highd_hjb.py --metric    # ~2 min (Monte Carlo metric precision vs d)
 python highd_hjb.py --sweep     # ~2.5 h (HJB at d = 1..16, 3 seeds; --seconds N
                                 #         time-boxes the call and resumes)
+python highd_degrade.py --geometry # ~40 s (effective collocation count vs d)
+python highd_degrade.py --fit   # ~35 min (supervised control + its budget ladder)
+python highd_degrade.py --run   # ~2 h   (31 cells: 3 samplers, 4 densities,
+                                #         5 seeds; --seconds N time-boxes it)
 python hard_bc.py               # ~14 min (hard-constraint ansatz vs soft penalty)
 python inverse.py               # ~40 min (inverse problem: 3 sweeps, 14 solves)
 python loss_weighting.py        # ~50 min (loss weights: 5 measurements, 60 solves)
@@ -1119,7 +1294,9 @@ so the reproduction path cannot quietly rot.
   $d = 4$, 2 and 1 — so it fails 6 to 15 dimensions before its own cost
   advantage would have arrived. Cost per step is linear in $d$ as promised;
   accuracy is what fails, so **nothing in this repo shows a PINN winning a cost
-  comparison anywhere.** **Irregular geometry** remains undemonstrated entirely,
+  comparison anywhere** — though §14 finds that most of the accuracy failure is
+  not the PINN's, since supervised regression onto the exact solution fails
+  alongside it at the same budget. **Irregular geometry** remains undemonstrated entirely,
   and is now the strongest remaining candidate for a setting where the mesh's
   cost is the binding constraint rather than the network's accuracy.
 - **The $d$-dependence is not an artifact of the heat equation**, which §§10–12
@@ -1134,29 +1311,36 @@ so the reproduction path cannot quietly rot.
   dimension" is too coarse — the dimension is a property of the problem, and it
   moved by a factor of two between the only two problems tested. There is **no
   mesh baseline for the HJB**, so §13 contains no crossover and claims none.
-- **Every PINN result except §§11 and 13 is 1D + time**, and those two are one
+- **Every PINN result except §§11, 13 and 14 is 1D + time**, and those are one
   budget rather than a search: the same architecture, step count and collocation
   count run at every $d$, on purpose, so that the sweep measures dimension and
-  not a tuner.
-  Whether a budget chosen *for* $d=8$ or $d=16$ — more collocation points,
-  importance-sampled ones, a wider net, longer training — recovers the accuracy
-  is not tested here, and §11's own last-quarter numbers ($d=8$: loss still
-  falling 2.0×, error flat at 0.94×) say the answer is not simply "train
-  longer". §12 tested "train longer" directly at both termini and it is not the
-  answer at either: $d=4$ at 4× the steps (two seeds) moved the error 2.4× and
-  is still 1.7× short, and $d=8$ at 2× the steps moved it **not at all** (7.052e-1
-  against 7.06e-1) while its loss fell 4.25×. So the step-count question is
-  closed and the answer is no. What a *differently shaped* budget buys —
-  importance-sampled collocation above all, since the top 1% of uniform points
-  carry 89% of the norm at $d=16$ — is what remains untested. §13 removes one
-  version of that explanation and not the other: its metric concentrates *less*
-  as $d$ grows (top 1% of points carry 5.6% at $d=1$ and 3.0% at $d=16$), so the
-  sampling story cannot be the whole of it — yet uniform collocation in a
-  16-dimensional box is still 4000 points in a space where they are all far
-  apart, and that is untouched by either section. (L-BFGS is studied in §4,
-  residual-adaptive collocation in §5, and hard boundary conditions in §7 — all
-  three were on this list. Soft penalties remain the default because the hard
-  ansatz must be hand-derived per problem, §7.)
+  not a tuner. The budget question is now closed in both directions. §12 tested
+  "train longer" at both termini and it is not the answer at either ($d=4$ at 4×
+  the steps is still 1.7× short; $d=8$ at 2× the steps moved **not at all**,
+  7.052e-1 against 7.06e-1, while its loss fell 4.25×). §14 tested the
+  *differently shaped* budget that §§11–12 left open, and it is not the answer
+  either: importance-sampled collocation is **1.9× worse at $d=8$ and 12× worse
+  at $d=16$**, residual-adaptive collocation changes nothing (inside the seed
+  spread), and a 16× range in collocation points at $d=8$ moves the error 1.03×
+  — less than the five-seed spread. (L-BFGS is studied in §4, residual-adaptive
+  collocation in §5, and hard boundary conditions in §7 — all three were on this
+  list. Soft penalties remain the default because the hard ansatz must be
+  hand-derived per problem, §7.)
+- **§§11–13's collapse is mostly not about PINNs, and §14 is where that is
+  measured.** Replace the physics-informed loss with supervised regression onto
+  the *exact solution* — same architecture, same points, same budget — and the
+  gap closes to 12% at $d=8$ and 2% at $d=16$; at $d=16$ the regression cannot
+  fit even its own 4000 labels in 40,000 Adam steps (own-sample error 0.839,
+  where outputting zero scores 1.0). So the honest statement of §11's 1270× is
+  that a width-128 tanh network trained by Adam cannot approximate a
+  $2^{-d/2}$-scale concentrated target in high $d$, whether or not it is told
+  the answer, and the residual formulation inherits that rather than causing it.
+  **What this leaves untested is the architecture**: every high-dimensional
+  number in this repo uses one width, one depth and one activation, and §14's
+  control says that is now the binding constraint. Separately, §14 puts a
+  ceiling on the sample as well — 4000 uniform points with exact labels and 20×
+  the budget do not determine the solution at $d=8$ to better than 0.254, which
+  no choice of objective can beat.
 - **Both high-dimensional problems are separable-mode problems with closed-form
   solutions**, and that is not a coincidence — it is what makes an exact score at
   $d=16$ possible at all, since there is no reference solution to compare against

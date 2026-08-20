@@ -2,7 +2,7 @@
 #
 # Regenerate every figure in figures/ from the committed logs and checkpoints.
 #
-#     ./reproduce.sh              # tests, then all 17 figures: ~2 min
+#     ./reproduce.sh              # tests, then all 18 figures: ~2 min
 #     PYTHON=/path/to/python ./reproduce.sh
 #
 # NO TRAINING happens here, and that is the point. Training this repo end to
@@ -26,6 +26,8 @@
 #     python experiments/loss_weighting.py  # ~50 min (weight ablation: 60 solves)
 #     python experiments/highd_hjb.py --sweep  # ~2.5 h (HJB d-sweep: 15 solves;
 #                                           #  --seconds N time-boxes and resumes)
+#     python experiments/highd_degrade.py --run    # ~2 h (samplers/density/seeds)
+#     python experiments/highd_degrade.py --fit    # ~35 min (supervised control)
 #
 # Determinism: the replay is pure post-processing of committed files, so it is
 # exact. Training is seeded and replays on the same torch build and CPU (the
@@ -71,7 +73,7 @@ step() {  # step <label> <script> [args...]
 # artifact it reads is committed, and that every checkpoint still loads into the
 # model the experiment builds today -- the failures this script exists to catch.
 step "test suite" -m pytest -q
-step "regenerate all 17 figures from committed artifacts" experiments/reproduce_figures.py
+step "regenerate all 18 figures from committed artifacts" experiments/reproduce_figures.py
 
 echo
 echo "=================================================================="
