@@ -9,7 +9,7 @@ them back into the figures:
                                    spectral_pinn, optimizer_study,
                                    crank_nicolson, inverse, highd_mesh,
                                    highd_pinn, highd_crossover, highd_hjb,
-                                   highd_degrade, wave
+                                   highd_degrade, highd_arch, wave
     logs + checkpoints/*.pt     -> spectral_fix, hard_bc
     checkpoints/*.pt            -> heat_error, burgers_error, burgers_slices,
                                    adaptive_collocation
@@ -39,6 +39,7 @@ import hard_bc
 import heat
 import highd_crossover
 import highd_degrade
+import highd_arch
 import highd_hjb
 import highd_mesh
 import highd_pinn
@@ -72,6 +73,7 @@ FIGURES = (
     "highd_crossover.png",        # highd_crossover, from its mesh/pinn/probe CSVs
     "highd_hjb.png",              # highd_hjb, from its sweep/trace CSVs
     "highd_degrade.png",          # highd_degrade, from its cells/geometry/fit CSVs
+    "highd_arch.png",             # highd_arch, from its sweep CSV
     "wave.png",                   # wave, from its cells/trace CSVs
 )
 
@@ -92,6 +94,7 @@ LOG_FILES = (
     "highd_hjb_metric.csv", "highd_hjb_check.csv",
     "highd_degrade_cells.csv", "highd_degrade_trace.csv",
     "highd_degrade_geometry.csv", "highd_degrade_fit.csv",
+    "highd_arch.csv",
     "wave_cells.csv", "wave_trace.csv", "wave_check.csv",
 )
 
@@ -143,6 +146,8 @@ def main():
          highd_hjb.figures_from_committed),
         ("high-d degradation (which part of the method fails)",
          highd_degrade.figures_from_committed),
+        ("high-d architecture (does a different network fix it)",
+         highd_arch.figures_from_committed),
         ("wave equation (d'Alembert truth, kink error, energy)",
          wave.figures_from_committed),
     ):
