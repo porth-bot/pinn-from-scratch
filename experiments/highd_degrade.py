@@ -782,7 +782,7 @@ FIT_FIELDS = ["arm", "d", "seed", "n_points", "steps", "rel_l2", "stderr",
 
 
 def fit_cell(problem, arm, seed=0, n_points=None, steps=None, width=None,
-             depth=None, lr=None, eval_n=SCORE_N):
+             depth=None, lr=None, eval_n=SCORE_N, activation="tanh"):
     """Supervised regression onto the exact solution at the arm's points.
 
     The control that separates three explanations of the d-collapse: the network
@@ -814,7 +814,7 @@ def fit_cell(problem, arm, seed=0, n_points=None, steps=None, width=None,
         exact(problem, coords[:, : problem.d].numpy(),
               coords[:, -1].numpy()), dtype=torch.float32).unsqueeze(1)
 
-    model = MLP(**model_config(problem, b["width"], b["depth"]))
+    model = MLP(**model_config(problem, b["width"], b["depth"], activation))
     opt = torch.optim.Adam(model.parameters(), lr=b["lr"])
     start = time.perf_counter()
     mse = float("nan")

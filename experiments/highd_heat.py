@@ -438,10 +438,14 @@ def mc_relative_sd(problem, n, seed=0):
 # ---------------------------------------------------------------------------
 # Training
 # ---------------------------------------------------------------------------
-def model_config(problem, width=128, depth=4):
-    """Constructor kwargs for the field. Input dimension is d + 1."""
+def model_config(problem, width=128, depth=4, activation="tanh"):
+    """Constructor kwargs for the field. Input dimension is d + 1.
+
+    ``activation`` defaults to tanh, which is what every high-dimensional
+    number in this repo was measured with; Sec. 16 varies it.
+    """
     return dict(in_dim=problem.d + 1, out_dim=1, width=width, depth=depth,
-                activation="tanh")
+                activation=activation)
 
 
 def train(
