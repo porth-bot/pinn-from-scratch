@@ -55,9 +55,11 @@ points, same budget — and the gap closes to 12% at $d=8$ and 2% at $d=16$; at
 $d=16$ the regression cannot fit even the 4000 labels it was handed. The
 collapse is therefore mostly **not** a fact about PINNs. It is a width-128 tanh
 network failing to approximate a $2^{-d/2}$-scale concentrated target, and the
-residual formulation inherits that rather than causing it. §14 names the
-architecture — one width, one depth, one activation everywhere above $d=1$ — as
-the binding untested variable this repo leaves behind.
+residual formulation inherits that rather than causing it. §14 named the
+architecture as the binding untested variable, and §16 tests it: width and
+depth do almost nothing, but a sine activation fits the $d=16$ labels to 0.067
+where tanh cannot fit them at all — and still scores 0.960 on the cube. The
+architecture was binding on the fit and is not binding on the generalization.
 
 Two PDEs rather than one: §13 repeats the whole sweep on a linear-quadratic HJB
 equation (nonlinear in $\nabla u$, backward in time, inhomogeneous boundary data,
@@ -1245,9 +1247,10 @@ becomes expensive, and every number in §12 stands. What it changes is the
 attribution. §11 measured "the PINN's error rises 1270× over $d = 1 \to 16$" and
 it is now clear that most of that is not about PINNs — it is the network's
 approximation of a $2^{-d/2}$-scale needle from a sample that sees it at 6
-effective points. A better *architecture* for concentrated high-dimensional
-targets would move §§11–13's numbers; a better *sampler* at this architecture
-does not, and this section measured four of them.
+effective points. A better *sampler* at this architecture does not help, and
+this section measured four of them; whether a better *architecture* would was
+left open here and is answered in §16, where it turns out to move the fit and
+not the error on the cube.
 
 ![where the high-dimensional PINN degrades](figures/highd_degrade.png)
 
@@ -1332,6 +1335,87 @@ against the exact conserved value, all six runs — nothing in the loss refers t
 it.)*
 
 
+### 16. Does a different network fix it? (`experiments/highd_arch.py`)
+
+§14 closed by naming the one variable it had not varied: every
+high-dimensional number above uses width 128, depth 4 and tanh, and §14's own
+control had just made the approximator the suspect. This section varies it, one
+factor at a time from §14's regression baseline — 4000 labelled points, 2000
+Adam steps, three seeds — at $d = 8$, where the fit lands but the test error
+stalls, and $d = 16$, where §14 found the network could not fit even its own
+labels. Regression rather than the residual loss on purpose: it is the setting
+where the objective is already out of the way, and it is ~30× cheaper per cell.
+
+**The size axes do almost nothing, and one of them goes the wrong way.**
+
+| $d$ | width 32 | width 128 | width 512 | depth 2 | depth 4 | depth 8 |
+|---|---|---|---|---|---|---|
+| 8 | 0.780 | **0.671** | 0.899 | 0.730 | **0.671** | 0.661 |
+| 16 | 1.213 | **1.140** | 0.992 | 1.371 | **1.140** | 1.052 |
+
+Bold is the shared baseline; the metric is the repo's uniform relative $L^2$,
+where **a network that outputs zero scores 1.000**. A 16× range in width and a
+4× range in depth move $d=8$ by 1.36× and 1.10×, against a seed spread that
+reaches 1.52× in the depth-8 cell. At $d=16$ the largest network tested — 798k
+parameters, 15× the baseline — reaches 0.992, which is to say it ties a
+constant. Width 512 is *worse* than width 128 at $d=8$ (0.899 vs 0.671) at 6.4×
+the wall clock. Nothing here is a fix.
+
+**The activation is different, and it splits §14's two failures apart.** A
+sine (SIREN) activation at the same parameter count:
+
+| $d$ | 1 | 2 | 4 | 8 | 16 |
+|---|---|---|---|---|---|
+| tanh, test | 1.49e-2 | 1.93e-2 | 9.65e-2 | 0.671 | 1.140 |
+| sin, test | 2.02e-3 | 5.54e-3 | 1.81e-2 | 0.192 | 0.960 |
+| tanh, own sample | 1.48e-2 | 1.85e-2 | 8.87e-2 | 0.656 | 1.110 |
+| sin, own sample | 1.94e-3 | 4.59e-3 | 1.38e-2 | 0.0645 | **0.0674** |
+
+Read the last row against §14's finding. §14 reported that at $d=16$ the
+regression control cannot fit the 4000 labels it was handed (own-sample error
+0.839 at 40,000 steps, where outputting zero scores 1.0). **A sine network fits
+them to 0.067 in 2000 steps** — 16.5× better than tanh at the same 2000 steps,
+and 12× better than §14's 40,000-step tanh run — and its own-sample
+error is flat between $d=8$ and $d=16$ (0.0645 → 0.0674). So that half of §14's
+result was a statement about tanh, not about the problem: the target *is*
+representable and Adam *can* find it on the sample, at this budget, in sixteen
+dimensions.
+
+And the other half does not move. At $d=16$ the same network's uniform-$L^2$
+test error is 0.960 — a 14.3× gap from its own-sample fit, and still in the
+region where a constant zero scores 1.000. Fitting 4000 points to 6.7% buys
+nothing on the cube, because those 4000 uniform points are worth six effective
+points at $d=16$ (§14's closed form). **The architecture was binding on the fit
+and is not binding on the generalization.**
+
+**The control, because the target is made of sines.** The exact solution here
+is a sum of products of $\sin(k\pi x_i)$, so a sine-activation network is
+*matched* to it and a win could easily be a fact about the target rather than
+about dimension. That is what $d = 1, 2, 4$ are in the table for. The test-error
+ratio tanh/sin reads 7.4×, 3.5×, 5.3×, 3.5× across $d = 1 \to 8$ — a roughly
+constant factor with no trend — and then 1.19× at $d=16$. So the advantage is a
+representation match that exists at every dimension and is *swamped* by the
+collapse rather than resisting it: sin's own error rises 474× over $d = 1 \to
+16$ against tanh's 77×. **Nothing here says SIREN fixes high-dimensional PINNs.**
+It says the fit and the generalization are separate failures with separate
+causes, which is what §14 could not tell apart.
+
+Two things this design does not settle, stated because the table invites the
+question. Width and depth both change the parameter count, so neither axis
+separates "a better shape" from "more parameters"; no two shapes in this sweep
+land within 35% of each other in parameters, so the sweep contains no
+matched-parameter comparison and `--table` says so rather than implying one.
+And three seeds is enough to see that the size effects are inside the seed
+spread; it is not enough to rank them.
+
+![architecture in high dimensions](figures/highd_arch.png)
+
+*(left, middle) the two size axes at $d=8$ and $d=16$, median with min–max over
+three seeds. (right) the activation across every $d$, test error solid and the
+fit on the network's own labelled points dashed — the two separate at $d=8$ and
+$d=16$, and that separation is the section.)*
+
+
 ## Reproduce
 
 Every figure, from a clean clone, without training anything:
@@ -1340,7 +1424,7 @@ Every figure, from a clean clone, without training anything:
 python -m venv .venv && source .venv/bin/activate
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt && pip install -e .
-./reproduce.sh                  # tests, then all 19 figures: ~2 min
+./reproduce.sh                  # tests, then all 20 figures: ~2 min
 ```
 
 Training this repo end to end is the better part of a day of CPU — the timings
@@ -1362,7 +1446,7 @@ committed rather than regenerated on demand.
 To actually retrain:
 
 ```bash
-pytest -q                       # 395 tests, ~1.5 min
+pytest -q                       # 406 tests, ~1 min
 cd experiments
 python heat.py                  # ~25 min (default solve + both sweeps)
 python heat.py --tail           # ~8 min  (final-iterate spread of the width sweep)
@@ -1387,6 +1471,8 @@ python highd_degrade.py --geometry # ~40 s (effective collocation count vs d)
 python highd_degrade.py --fit   # ~35 min (supervised control + its budget ladder)
 python highd_degrade.py --run   # ~2 h   (31 cells: 3 samplers, 4 densities,
                                 #         5 seeds; --seconds N time-boxes it)
+python highd_arch.py --run      # ~25 min (54 cells: width/depth/activation,
+                                #         3 seeds; --seconds N time-boxes it)
 python wave.py --check          # ~5 s   (d'Alembert vs the sine series, no training)
 python wave.py --train          # ~25 min (wave equation: 2 ICs x 3 seeds)
 python hard_bc.py               # ~14 min (hard-constraint ansatz vs soft penalty)
@@ -1498,9 +1584,18 @@ so the reproduction path cannot quietly rot.
   that a width-128 tanh network trained by Adam cannot approximate a
   $2^{-d/2}$-scale concentrated target in high $d$, whether or not it is told
   the answer, and the residual formulation inherits that rather than causing it.
-  **What this leaves untested is the architecture**: every high-dimensional
-  number in this repo uses one width, one depth and one activation, and §14's
-  control says that is now the binding constraint. Separately, §14 puts a
+  **The architecture that §14 left untested is now tested in §16**, and it
+  splits the failure in two. Width (16× range) and depth (4× range) move the
+  $d=8$ error by 1.36× and 1.10×, inside the seed spread, and the largest
+  network tried — 798k parameters — only ties a constant at $d=16$. A sine
+  activation is different: it fits the $d=16$ labels to 0.067 where tanh cannot
+  fit them at all, refuting §14's "cannot fit its own 4000 labels" as a
+  statement about the problem, while its uniform-$L^2$ error stays at 0.960.
+  Its advantage is also a roughly constant 3.5–7.4× at $d = 1..8$ rather than
+  something that grows, and the target is a sum of products of sines, so this
+  is a representation match rather than a high-dimensional fix. **What remains
+  binding is the sample**, not the network: 4000 uniform points are worth six
+  effective ones at $d=16$, and no architecture in this sweep gets past that. Separately, §14 puts a
   ceiling on the sample as well — 4000 uniform points with exact labels and 20×
   the budget do not determine the solution at $d=8$ to better than 0.254, which
   no choice of objective can beat.
