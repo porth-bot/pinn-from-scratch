@@ -9,7 +9,8 @@ them back into the figures:
                                    spectral_pinn, optimizer_study,
                                    crank_nicolson, inverse, highd_mesh,
                                    highd_pinn, highd_crossover, highd_hjb,
-                                   highd_degrade, highd_arch, wave
+                                   highd_degrade, highd_arch, wave,
+                                   wave_leapfrog
     logs + checkpoints/*.pt     -> spectral_fix, hard_bc
     checkpoints/*.pt            -> heat_error, burgers_error, burgers_slices,
                                    adaptive_collocation
@@ -48,6 +49,7 @@ import loss_weighting
 import optimizer_study
 import spectral_bias
 import wave
+import wave_leapfrog
 
 ROOT = Path(__file__).resolve().parent.parent
 LOGS = ROOT / "logs"
@@ -75,6 +77,7 @@ FIGURES = (
     "highd_degrade.png",          # highd_degrade, from its cells/geometry/fit CSVs
     "highd_arch.png",             # highd_arch, from its sweep CSV
     "wave.png",                   # wave, from its cells/trace CSVs
+    "wave_leapfrog.png",          # wave_leapfrog, from its sweep/order CSVs
 )
 
 LOG_FILES = (
@@ -96,6 +99,7 @@ LOG_FILES = (
     "highd_degrade_geometry.csv", "highd_degrade_fit.csv",
     "highd_arch.csv",
     "wave_cells.csv", "wave_trace.csv", "wave_check.csv",
+    "wave_leapfrog.csv", "wave_leapfrog_order.csv",
 )
 
 CKPT_FILES = (
@@ -150,6 +154,8 @@ def main():
          highd_arch.figures_from_committed),
         ("wave equation (d'Alembert truth, kink error, energy)",
          wave.figures_from_committed),
+        ("wave equation, leapfrog baseline (order, cost, energy)",
+         wave_leapfrog.figures_from_committed),
     ):
         print(f"\n>>> {label}")
         fn()
