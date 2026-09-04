@@ -2,7 +2,7 @@
 #
 # Regenerate every figure in figures/ from the committed logs and checkpoints.
 #
-#     ./reproduce.sh              # tests, then all 21 figures: ~2 min
+#     ./reproduce.sh              # 437 tests, then all 21 figures: 1-4 min
 #     PYTHON=/path/to/python ./reproduce.sh
 #
 # NO TRAINING happens here, and that is the point. Training this repo end to

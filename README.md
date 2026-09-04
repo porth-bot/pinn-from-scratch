@@ -737,7 +737,7 @@ problem class; §1's committed history oscillates 14× over its last 1500 steps)
 |---|---|---|---|---|---|---|
 | 1 | 50,049 | **8.18e-4** | 2.1e-4 | 1.68× | 0.19% | 27.2 |
 | 2 | 50,177 | 3.93e-3 | 5.2e-5 | 1.03× | 0.21% | 40.2 |
-| 4 | 50,433 | 3.86e-2 | 4.1e-3 | 1.23× | 0.13% | 65.8 |
+| 4 | 50,433 | 3.86e-2 | 4.1e-3 | 1.23× | 0.13% | 65.7 |
 | 8 | 50,945 | 7.64e-1 | 2.7e-2 | 1.07× | 0.19% | 115.8 |
 | 16 | 51,969 | **1.041** | 2.9e-2 | 1.06× | 1.12% | 223.8 |
 
@@ -834,7 +834,7 @@ this row is *measured at every $d$ out to 16*, with no extrapolation anywhere:
 
 | $d$ | 1 | 2 | 4 | 8 | 12 | 16 |
 |---|---|---|---|---|---|---|
-| mesh, s | 0.00015 | 0.00032 | 0.00076 | 0.0024 | 0.156 | **30.7** |
+| mesh, s | 0.00015 | 0.00032 | 0.00076 | 0.0024 | 0.156 | **30.6** |
 | mesh rel $L^2$ | 2.9e-2 | 3.1e-2 | 2.4e-2 | 1.9e-2 | 1.7e-2 | 1.6e-2 |
 | PINN, s | 7.1 | 12.1 | **146** | never | — | never |
 | PINN best rel $L^2$ | 8.4e-4 | 4.0e-3 | 4.0e-2 | 7.1e-1 | — | 1.04 |
@@ -1059,7 +1059,7 @@ so the raw number would read as *improving*):
 
 | $d$ | 1 | 2 | 4 | 8 | 16 |
 |---|---|---|---|---|---|
-| relative residual | 0.051 | 0.054 | 0.049 | 0.048 | **0.119** |
+| relative residual | 0.050 | 0.054 | 0.049 | 0.048 | **0.119** |
 | relative terminal | 0.051 | 0.033 | 0.034 | 0.020 | 0.068 |
 | relative boundary | 0.018 | 0.008 | 0.025 | 0.009 | 0.035 |
 
@@ -1282,7 +1282,7 @@ measures the difference: at 50, 200 and 800 modes the rms gap is
 $6.6\times10^{-4}$, $9.6\times10^{-5}$, $1.9\times10^{-5}$ while the max gap
 falls only $9.6\times10^{-3} \to 6.0\times10^{-4}$ — Gibbs at the travelling
 corner, which is the whole difference. Both boundary conditions, the initial
-displacement and the zero initial velocity hold to $2\times10^{-16}$, and the
+displacement and the zero initial velocity hold to $5\times10^{-16}$, and the
 PDE holds by central differences to $9\times10^{-8}$ away from the corners.
 
 **Two initial conditions.** `sine`: $f = \sin\pi x$, a standing wave, the
@@ -1352,12 +1352,13 @@ where the objective is already out of the way, and it is ~30× cheaper per cell.
 | $d$ | width 32 | width 128 | width 512 | depth 2 | depth 4 | depth 8 |
 |---|---|---|---|---|---|---|
 | 8 | 0.780 | **0.671** | 0.899 | 0.730 | **0.671** | 0.661 |
-| 16 | 1.213 | **1.140** | 0.992 | 1.371 | **1.140** | 1.052 |
+| 16 | 1.213 | **1.140** | 0.992 | 1.371 | **1.140** | 1.051 |
 
 Bold is the shared baseline; the metric is the repo's uniform relative $L^2$,
 where **a network that outputs zero scores 1.000**. A 16× range in width and a
-4× range in depth move $d=8$ by 1.36× and 1.10×, against a seed spread that
-reaches 1.52× in the depth-8 cell. At $d=16$ the largest network tested — 798k
+4× range in depth move $d=8$ by 1.34× and 1.10× (medians over three seeds),
+against a seed spread that reaches 1.52× in the depth-8 cell. At $d=16$ the
+largest network tested — 798k
 parameters, 15× the baseline — reaches 0.992, which is to say it ties a
 constant. Width 512 is *worse* than width 128 at $d=8$ (0.899 vs 0.671) at 6.4×
 the wall clock. Nothing here is a fix.
@@ -1443,11 +1444,14 @@ meaningless. Everything below is at $r < 1$, where the scheme is doing ordinary
 approximate work.
 
 **The observed order depends on when you look, and two natural choices give the
-wrong answer.** Error at a single time, normalized by $\|f\|$, $r = 0.5$:
+wrong answer.** Error at a single time, normalized by $\|f\|$, $r = 0.5$;
+each cell is the median of the three refinements in
+[`logs/wave_leapfrog_order.csv`](logs/wave_leapfrog_order.csv), since the
+finest pair alone still moves by 0.03:
 
 | IC | $t = 0.7$ | $t = 1.0$ | $t = 2.0$ |
 |---|---|---|---|
-| `sine` | **2.00** | 4.00 | 4.01 |
+| `sine` | **2.00** | 4.00 | 4.00 |
 | `pluck` | **1.03** | 1.03 | 1.03 |
 
 The sine is a standing wave of period $2/c$, so at $t = 1$ and $t = 2$ it sits at
@@ -1507,7 +1511,7 @@ Every figure, from a clean clone, without training anything:
 python -m venv .venv && source .venv/bin/activate
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt && pip install -e .
-./reproduce.sh                  # tests, then all 21 figures: ~2 min
+./reproduce.sh                  # 437 tests, then all 21 figures: 1-4 min
 ```
 
 Training this repo end to end is the better part of a day of CPU — the timings
@@ -1529,7 +1533,7 @@ committed rather than regenerated on demand.
 To actually retrain:
 
 ```bash
-pytest -q                       # 406 tests, ~1 min
+pytest -q                       # 437 tests, 1-3 min
 cd experiments
 python heat.py                  # ~25 min (default solve + both sweeps)
 python heat.py --tail           # ~8 min  (final-iterate spread of the width sweep)
@@ -1573,6 +1577,13 @@ are fixed; runtimes are single-core CPU.
 replay path, that every log and checkpoint the replay reads is committed, and
 that each checkpoint still loads into the model its experiment builds today —
 so the reproduction path cannot quietly rot.
+
+`tests/test_readme_numbers.py` covers the other way a write-up rots, which no
+figure check can see: a number *typed into a table*. It recomputes Secs. 1, 11,
+12, 13, 15, 16 and 17 out of `logs/`, at the precision this file prints, and it
+found seven drifted numbers on the day it was written. What it does not cover
+yet — Secs. 2–10 and 14 — is listed in its own docstring rather than left to be
+assumed.
 
 ## Design notes
 
@@ -1670,7 +1681,7 @@ so the reproduction path cannot quietly rot.
   the answer, and the residual formulation inherits that rather than causing it.
   **The architecture that §14 left untested is now tested in §16**, and it
   splits the failure in two. Width (16× range) and depth (4× range) move the
-  $d=8$ error by 1.36× and 1.10×, inside the seed spread, and the largest
+  $d=8$ error by 1.34× and 1.10×, inside the seed spread, and the largest
   network tried — 798k parameters — only ties a constant at $d=16$. A sine
   activation is different: it fits the $d=16$ labels to 0.067 where tanh cannot
   fit them at all, refuting §14's "cannot fit its own 4000 labels" as a
