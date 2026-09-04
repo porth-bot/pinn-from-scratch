@@ -1320,11 +1320,12 @@ hyperbolic problem, measured as an energy deficit rather than as a frequency
 sweep.** The energy trace (right panel) shows it saturating there by step ~3000
 while the smooth run climbs to 1.
 
-What this does not show: no classical baseline is run here, so there is no cost
-comparison — a leapfrog scheme on this problem is a few lines and would beat the
-network on every axis, as §6 measured for the heat equation. And the corner is
-the only non-smoothness tested; a shock (§2) is a different failure with a
-different fix.
+What this does not show: the corner is the only non-smoothness tested; a shock
+(§2) is a different failure with a different fix. The classical baseline this
+section used to defer — "a leapfrog scheme on this problem is a few lines and
+would beat the network on every axis" — is now **run**, in §17, and the guess
+was right on the outcome and wrong about how to measure it: the mesh is exact at
+a Courant number of 1, so the honest comparison is the one where it is *not*.
 
 ![the wave equation against a d'Alembert ground truth](figures/wave.png)
 
@@ -1416,6 +1417,88 @@ fit on the network's own labelled points dashed — the two separate at $d=8$ an
 $d=16$, and that separation is the section.)*
 
 
+### 17. The leapfrog baseline §15 owed (`experiments/wave_leapfrog.py`)
+
+§15 ended by naming a missing measurement and predicting its result: "a leapfrog
+scheme on this problem is a few lines and would beat the network on every axis".
+Here it is. The explicit central-difference scheme, with $r = c\Delta t/\Delta x$
+the Courant number and $\delta^2 u_j = u_{j-1} - 2u_j + u_{j+1}$:
+
+$$u_j^{n+1} = 2u_j^n - u_j^{n-1} + r^2\,\delta^2 u_j^n,\qquad
+u_j^1 = u_j^0 + \tfrac{r^2}{2}\delta^2 u_j^0,$$
+
+the start step coming from $u^1 = u^0 + \Delta t\,u_t^0 + \tfrac{\Delta t^2}{2}u_{tt}^0$
+with the PDE supplying $u_{tt}$. Von Neumann analysis gives $r \le 1$; truncation
+is $O(\Delta t^2 + \Delta x^2)$. Six lines, as advertised.
+
+**At $r = 1$ it is exact.** The update collapses to
+$u_j^{n+1} = u_{j+1}^n + u_{j-1}^n - u_j^{n-1}$, which is d'Alembert written on
+the grid: with $\Delta t = \Delta x/c$ the mesh points lie *on* the
+characteristics, so the scheme transports the initial data along them without
+interpolating anything. Every cell of the sweep — both initial conditions, every
+grid — comes back at $\le 2\times10^{-15}$, the plucked string's corner included.
+**This is a fact about the 1D constant-coefficient wave equation and not about
+meshes**, so quoting it as a $10^{13}\times$ win over the network would be
+meaningless. Everything below is at $r < 1$, where the scheme is doing ordinary
+approximate work.
+
+**The observed order depends on when you look, and two natural choices give the
+wrong answer.** Error at a single time, normalized by $\|f\|$, $r = 0.5$:
+
+| IC | $t = 0.7$ | $t = 1.0$ | $t = 2.0$ |
+|---|---|---|---|
+| `sine` | **2.00** | 4.00 | 4.01 |
+| `pluck` | **1.03** | 1.03 | 1.03 |
+
+The sine is a standing wave of period $2/c$, so at $t = 1$ and $t = 2$ it sits at
+a turning point of $\cos(\pi c t)$, where a phase error — which is what the
+scheme's numerical dispersion actually produces — enters *quadratically*. The
+measured order there is 4 for a second-order scheme. And at $t = 0.5$ the exact
+solution is identically zero ($\|u\|/\|f\| = 2\times10^{-16}$), so a *relative*
+error has no denominator at all, which is why the table above divides by a
+constant. **§15's own time window ends at $t = 2$** — one of the flattering
+points — so the space-time metric it scores the network on is the right one to
+compare against, and it is what the table below uses.
+
+**The corner costs an order.** The pluck reads 1.03 everywhere: the $O(\Delta x^2)$
+truncation term carries a fourth derivative the solution does not have. The same
+non-smoothness that costs the network $8\times$ (§15) costs the mesh a
+convergence order — and it shows up in the scheme's start step too, where
+$\delta^2 f$ is $O(1)$ rather than $O(\Delta x^2)$ at the corner node, injecting
+an initial velocity of 1.19 at exactly one point that does not shrink with the
+grid (asserted in the tests).
+
+**Against the network**, on §15's own space-time metric where a zero field scores
+1.0, at $r = 0.5$ and the *coarsest grid in the sweep* ($n_x = 26$):
+
+| IC | PINN rel $L^2$ | PINN seconds | mesh rel $L^2$ | mesh seconds | accuracy | speed |
+|---|---|---|---|---|---|---|
+| `sine` | $1.68\times10^{-2}$ | 261 | $1.74\times10^{-3}$ | $7.2\times10^{-4}$ | $9.7\times$ | $3.6\times10^{5}$ |
+| `pluck` | $1.35\times10^{-1}$ | 194 | $3.31\times10^{-2}$ | $7.0\times10^{-4}$ | $4.1\times$ | $2.8\times10^{5}$ |
+
+§15's guess was right: 25 grid points and under a millisecond beat three
+seeds of Adam. The $3\times10^{5}$ speed factor is the same order §6 measured for
+the heat equation against Crank–Nicolson, which is the point — **this is not a
+new finding, it is the old one holding on a hyperbolic problem with non-smooth
+data**, the case where a PINN's mesh-free framing sounds most appealing.
+
+**And the energy, in §15's own units.** The scheme conserves a discrete energy
+exactly — hand-derived, with the potential term pairing *two* time levels,
+$E^{n+1/2} = \tfrac12\|\tfrac{u^{n+1}-u^n}{\Delta t}\|^2 + \tfrac{c^2}{2}\langle
+D_xu^{n+1}, D_xu^n\rangle$; the same-level $\|D_xu^n\|^2$ oscillates at
+$O(\Delta t^2)$ and reads as drift. Measured drift is $\le 8\times10^{-14}$ at
+every $r<1$ cell. Against the exact conserved value, the coarsest pluck grid
+carries **0.946** and $n_x = 401$ carries 0.9993, where §15's network carries
+**0.766** — so the network's energy deficit is not a resolution problem that any
+discretization would share.
+
+![the leapfrog baseline](figures/wave_leapfrog.png)
+
+*(left) accuracy against $\Delta x$ for four Courant numbers, with §15's two PINN
+results as horizontal lines; the $r=1$ pair sits at machine precision. (middle)
+the order study — the sine's slope doubles at a turning time. (right) accuracy
+against wall-clock at $r=0.5$, the PINN's two runs marked with stars.*
+
 ## Reproduce
 
 Every figure, from a clean clone, without training anything:
@@ -1424,7 +1507,7 @@ Every figure, from a clean clone, without training anything:
 python -m venv .venv && source .venv/bin/activate
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt && pip install -e .
-./reproduce.sh                  # tests, then all 20 figures: ~2 min
+./reproduce.sh                  # tests, then all 21 figures: ~2 min
 ```
 
 Training this repo end to end is the better part of a day of CPU — the timings
@@ -1475,6 +1558,7 @@ python highd_arch.py --run      # ~25 min (54 cells: width/depth/activation,
                                 #         3 seeds; --seconds N time-boxes it)
 python wave.py --check          # ~5 s   (d'Alembert vs the sine series, no training)
 python wave.py --train          # ~25 min (wave equation: 2 ICs x 3 seeds)
+python wave_leapfrog.py         # ~3 s   (the leapfrog baseline: CFL sweep, order, cost)
 python hard_bc.py               # ~14 min (hard-constraint ansatz vs soft penalty)
 python inverse.py               # ~40 min (inverse problem: 3 sweeps, 14 solves)
 python loss_weighting.py        # ~50 min (loss weights: 5 measurements, 60 solves)
@@ -1599,16 +1683,20 @@ so the reproduction path cannot quietly rot.
   ceiling on the sample as well — 4000 uniform points with exact labels and 20×
   the budget do not determine the solution at $d=8$ to better than 0.254, which
   no choice of objective can beat.
-- **§15 has no classical baseline**, so nothing there is a cost comparison — a
-  leapfrog scheme on a plucked string is a few lines and would win on every
-  axis, as §6 measured for the heat equation. The section's claims are about
-  *where* the network's error sits (2.6× concentrated on the travelling corners)
-  and how much of the conserved energy it carries (76.6%, between the first and
-  second Fourier modes of the pluck), not about whether a PINN should be used
-  for this. A corner is also the only non-smoothness tested; a shock (§2) is a
-  different failure with a different fix, and discontinuous initial *data* —
-  where d'Alembert still gives an exact answer and the strong-form residual is
-  even less meaningful — is not run.
+- **§15's missing classical baseline is now §17**, and it does not change §15's
+  conclusions so much as price them: 25 grid points and 0.7 ms beat three seeds
+  of Adam by 9.7× (`sine`) and 4.1× (`pluck`) at $3\times10^{5}$ less
+  wall-clock, the same order §6 measured against Crank–Nicolson. Two things
+  §17 adds that were not in the guess. The scheme is **exact** at a Courant
+  number of 1 — the update is d'Alembert on the characteristics — which is a
+  property of the 1D constant-coefficient wave equation and not a mesh-versus-
+  network number, so the comparison above is deliberately made at $r<1$. And
+  measuring a convergence order at $t=1$ or $t=2$ reports 4 instead of 2,
+  because the sine is a standing wave at a turning point there; §15's own
+  window ends at $t=2$. What §17 does **not** settle: a corner is still the only
+  non-smoothness tested; a shock (§2) is a different failure with a different
+  fix, and discontinuous initial *data* — where d'Alembert still gives an exact
+  answer and the strong-form residual is even less meaningful — is not run.
 - **Both high-dimensional problems are separable-mode problems with closed-form
   solutions**, and that is not a coincidence — it is what makes an exact score at
   $d=16$ possible at all, since there is no reference solution to compare against
