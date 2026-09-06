@@ -1511,7 +1511,7 @@ Every figure, from a clean clone, without training anything:
 python -m venv .venv && source .venv/bin/activate
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt && pip install -e .
-./reproduce.sh                  # 437 tests, then all 21 figures: 1-4 min
+./reproduce.sh                  # 439 tests, then all 21 figures: 1-4 min
 ```
 
 Training this repo end to end is the better part of a day of CPU — the timings
@@ -1533,7 +1533,7 @@ committed rather than regenerated on demand.
 To actually retrain:
 
 ```bash
-pytest -q                       # 437 tests, 1-3 min
+pytest -q                       # 439 tests, 1-3 min
 cd experiments
 python heat.py                  # ~25 min (default solve + both sweeps)
 python heat.py --tail           # ~8 min  (final-iterate spread of the width sweep)
